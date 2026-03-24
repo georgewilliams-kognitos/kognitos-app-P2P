@@ -221,7 +221,7 @@ const mockMetricResults: KognitosMetricResult[] = [
 
 // ── API Functions ──────────────────────────────────────────────
 
-/** Simulates GET /api/v1/.../runs/{run_id} */
+/** Simulates GET /api/v1/organizations/{organization_id}/workspaces/{workspace_id}/runs/{run_id} */
 export async function getRun(runId: string): Promise<KognitosRun | null> {
   await Promise.resolve();
   const run = mockRuns.find(
@@ -231,7 +231,7 @@ export async function getRun(runId: string): Promise<KognitosRun | null> {
   return run ?? null;
 }
 
-/** Simulates GET /api/v1/.../runs */
+/** Simulates GET /api/v1/organizations/{organization_id}/workspaces/{workspace_id}/runs */
 export async function listRuns(options?: {
   pageSize?: number;
   filter?: string;
@@ -251,7 +251,7 @@ export async function listRuns(options?: {
   return { runs, nextPageToken };
 }
 
-/** Simulates GET /api/v1/.../runs/{run_id}/events */
+/** Simulates GET /api/v1/organizations/{organization_id}/workspaces/{workspace_id}/runs/{run_id}/events */
 export async function getRunEvents(
   runId: string,
   options?: { pageSize?: number; filter?: string }
@@ -273,13 +273,13 @@ export async function getRunEvents(
   return { runEvents, nextPageToken };
 }
 
-/** Simulates GET /api/v1/.../dashboards:queryInsights */
+/** Simulates GET /api/v1/organizations/{organization_id}/workspaces/{workspace_id}/dashboards:queryInsights */
 export async function queryInsights(): Promise<KognitosInsights> {
   await Promise.resolve();
   return mockInsights;
 }
 
-/** Simulates GET /api/v1/.../metrics:query */
+/** Simulates GET /api/v1/organizations/{organization_id}/workspaces/{workspace_id}/metrics:query */
 export async function queryMetrics(options?: {
   metrics?: string[];
   groupBy?: string[];
@@ -298,7 +298,7 @@ export async function queryMetrics(options?: {
   return { results };
 }
 
-/** Simulates GET /api/v1/.../workspaces:automationRunAggregates */
+/** Simulates GET /api/v1/organizations/{organization_id}/workspaces/{workspace_id}/workspaces:automationRunAggregates */
 export async function getAutomationRunAggregates(): Promise<{
   automationRunAggregates: {
     automationId: string;
