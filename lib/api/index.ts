@@ -28,10 +28,8 @@ export {
 } from "./notifications";
 
 export {
-  queryInsights,
-  queryMetrics,
-  getRun,
-  listRuns,
-  getRunEvents,
-  getAutomationRunAggregates,
-} from "@/lib/kognitos";
+  getKognitosRunFromDb,
+  getKognitosInsightsCacheFromDb,
+  listKognitosRunRowsFromDb,
+  type KognitosRunRow,
+} from "@/lib/db";

@@ -1,8 +1,10 @@
 export {
   getRun,
   listRuns,
-  getRunEvents,
+  listAllRunsForAutomation,
   queryInsights,
   queryMetrics,
   getAutomationRunAggregates,
+  normalizeInsightsResponse,
 } from "./client";
+export { runShortIdFromName } from "./stage";

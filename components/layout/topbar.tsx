@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Bell, LogOut, Search, User as UserIcon } from "lucide-react";
+import { Bell, LogOut, RefreshCw, Search, User as UserIcon } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { DOMAIN, getRoleConfig } from "@/lib/domain.config";
 import { queryUnreadNotificationCount } from "@/lib/queries";
@@ -41,6 +41,7 @@ export function Topbar() {
   const searchParams = useSearchParams();
   const [searchValue, setSearchValue] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
+  const [syncingKognitos, setSyncingKognitos] = useState(false);
 
   useEffect(() => {
     const q = searchParams.get("search");
@@ -60,11 +61,50 @@ export function Topbar() {
 
   function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") {
-      router.push(`/?search=${encodeURIComponent(searchValue)}`);
+      router.push(
+        `/worklist?search=${encodeURIComponent(searchValue)}`,
+      );
     }
   }
 
   const roleConfig = user ? getRoleConfig(user.role) : undefined;
+
+  async function handleKognitosRefresh() {
+    setSyncingKognitos(true);
+    try {
+      const res = await fetch("/api/kognitos/sync", { method: "POST" });
+      const json = (await res.json().catch(() => ({}))) as {
+        written?: boolean;
+        newRuns?: number;
+        mode?: "full" | "incremental";
+        sinceCreateTime?: string | null;
+        fetchedFromKognitos?: number;
+        skippedAlreadyInDb?: number;
+        message?: string;
+        error?: string;
+      };
+      if (!res.ok) {
+        window.alert(
+          json.message ?? json.error ?? `Kognitos sync failed (${res.status})`,
+        );
+        return;
+      }
+      const fetched = json.fetchedFromKognitos ?? 0;
+      const skipped = json.skippedAlreadyInDb ?? 0;
+      const modeLabel =
+        json.mode === "full"
+          ? "full history backfill"
+          : "incremental (runs on/after latest stored create_time)";
+      const msg =
+        json.written === false
+          ? `Kognitos sync (${modeLabel}): ${fetched} run(s) from API, ${skipped} already in Supabase — no new rows.`
+          : `Imported ${json.newRuns ?? 0} new run(s) (${modeLabel}). ${fetched} fetched, ${skipped} skipped as duplicates.`;
+      window.alert(msg);
+      window.dispatchEvent(new Event("chat-data-changed"));
+    } finally {
+      setSyncingKognitos(false);
+    }
+  }
 
   return (
     <TooltipProvider>
@@ -85,6 +125,23 @@ export function Topbar() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={syncingKognitos}
+                onClick={() => void handleKognitosRefresh()}
+                aria-label="Refresh Kognitos runs"
+              >
+                <RefreshCw
+                  className={`size-[18px] ${syncingKognitos ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh Kognitos (import new runs)</TooltipContent>
+          </Tooltip>
+
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

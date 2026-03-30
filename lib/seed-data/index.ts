@@ -115,7 +115,6 @@ export const requests = [
     created_at: "2026-02-20T09:00:00Z",
     updated_at: "2026-02-20T09:00:00Z",
     kognitos_run_id: null,
-    episode_id: null,
   },
   {
     id: "req-2",
@@ -135,7 +134,6 @@ export const requests = [
     created_at: "2026-02-25T11:30:00Z",
     updated_at: "2026-02-25T11:30:00Z",
     kognitos_run_id: null,
-    episode_id: "ep-travel-q1",
   },
 
   // Submitted (3)
@@ -157,7 +155,7 @@ export const requests = [
     created_at: "2026-02-17T10:00:00Z",
     updated_at: "2026-02-18T14:00:00Z",
     kognitos_run_id: "run-1",
-    episode_id: null,
+    kognitos_run_state: "completed",
   },
   {
     id: "req-4",
@@ -177,7 +175,6 @@ export const requests = [
     created_at: "2026-02-19T16:00:00Z",
     updated_at: "2026-02-20T09:30:00Z",
     kognitos_run_id: null,
-    episode_id: null,
   },
   {
     id: "req-5",
@@ -197,7 +194,7 @@ export const requests = [
     created_at: "2026-02-21T15:00:00Z",
     updated_at: "2026-02-22T08:15:00Z",
     kognitos_run_id: "run-2",
-    episode_id: null,
+    kognitos_run_state: "completed",
   },
 
   // Under Review (3)
@@ -219,7 +216,7 @@ export const requests = [
     created_at: "2026-02-09T14:00:00Z",
     updated_at: "2026-02-15T11:00:00Z",
     kognitos_run_id: "run-3",
-    episode_id: "ep-infra-q1",
+    kognitos_run_state: "completed",
   },
   {
     id: "req-7",
@@ -239,7 +236,6 @@ export const requests = [
     created_at: "2026-02-11T13:00:00Z",
     updated_at: "2026-02-16T10:30:00Z",
     kognitos_run_id: null,
-    episode_id: null,
   },
   {
     id: "req-8",
@@ -259,7 +255,6 @@ export const requests = [
     created_at: "2026-02-13T16:30:00Z",
     updated_at: "2026-02-17T09:00:00Z",
     kognitos_run_id: null,
-    episode_id: null,
   },
 
   // Approved (3)
@@ -281,7 +276,7 @@ export const requests = [
     created_at: "2026-01-18T09:00:00Z",
     updated_at: "2026-01-28T15:00:00Z",
     kognitos_run_id: "run-4",
-    episode_id: "ep-infra-q1",
+    kognitos_run_state: "completed",
   },
   {
     id: "req-10",
@@ -301,7 +296,6 @@ export const requests = [
     created_at: "2026-01-30T11:00:00Z",
     updated_at: "2026-02-05T14:00:00Z",
     kognitos_run_id: null,
-    episode_id: null,
   },
   {
     id: "req-11",
@@ -321,7 +315,6 @@ export const requests = [
     created_at: "2026-01-24T14:00:00Z",
     updated_at: "2026-02-01T16:00:00Z",
     kognitos_run_id: null,
-    episode_id: "ep-travel-q1",
   },
 
   // Rejected (2)
@@ -343,7 +336,6 @@ export const requests = [
     created_at: "2026-01-14T09:00:00Z",
     updated_at: "2026-01-22T11:30:00Z",
     kognitos_run_id: null,
-    episode_id: null,
   },
   {
     id: "req-13",
@@ -363,7 +355,6 @@ export const requests = [
     created_at: "2026-01-09T11:00:00Z",
     updated_at: "2026-01-18T09:00:00Z",
     kognitos_run_id: null,
-    episode_id: null,
   },
 
   // Closed (2)
@@ -385,7 +376,7 @@ export const requests = [
     created_at: "2026-01-04T10:00:00Z",
     updated_at: "2026-01-15T10:00:00Z",
     kognitos_run_id: "run-5",
-    episode_id: null,
+    kognitos_run_state: "completed",
   },
   {
     id: "req-15",
@@ -405,7 +396,6 @@ export const requests = [
     created_at: "2026-01-05T14:00:00Z",
     updated_at: "2026-01-20T09:00:00Z",
     kognitos_run_id: null,
-    episode_id: null,
   },
 ];
 

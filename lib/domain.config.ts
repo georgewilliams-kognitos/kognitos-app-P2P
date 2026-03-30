@@ -70,22 +70,35 @@ export const DOMAIN = {
     {
       value: "requester",
       label: "Requester",
-      defaultPath: "/",
-      allowedPaths: ["/", "/requests", "/notifications"],
+      defaultPath: "/dashboard",
+      allowedPaths: ["/", "/dashboard", "/worklist", "/requests", "/notifications"],
       actions: ["create", "submit"],
     },
     {
       value: "reviewer",
       label: "Reviewer",
-      defaultPath: "/",
-      allowedPaths: ["/", "/requests", "/rules", "/notifications"],
+      defaultPath: "/dashboard",
+      allowedPaths: [
+        "/dashboard",
+        "/worklist",
+        "/requests",
+        "/rules",
+        "/notifications",
+      ],
       actions: ["approve", "reject", "assign", "escalate"],
     },
     {
       value: "manager",
       label: "Manager",
       defaultPath: "/dashboard",
-      allowedPaths: ["/", "/dashboard", "/rules", "/notifications", "/settings"],
+      allowedPaths: [
+        "/",
+        "/dashboard",
+        "/worklist",
+        "/rules",
+        "/notifications",
+        "/settings",
+      ],
       actions: ["assign"],
     },
     {
@@ -99,8 +112,8 @@ export const DOMAIN = {
 
   // ── Navigation ────────────────────────────────────────────────
   navItems: [
-    { label: "Worklist", href: "/", icon: "ClipboardList" },
     { label: "Dashboard", href: "/dashboard", icon: "BarChart3" },
+    { label: "Worklist", href: "/worklist", icon: "ClipboardList" },
     { label: "Rules", href: "/rules", icon: "BookOpen" },
     { label: "Notifications", href: "/notifications", icon: "Bell" },
     { label: "Settings", href: "/settings", icon: "Settings", roles: ["admin", "manager"] },

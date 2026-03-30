@@ -138,7 +138,7 @@ export interface LineItem {
 
 ## Step 3: Create Your Database Schema (`supabase/migrations/`)
 
-Map your TypeScript types to PostgreSQL tables. Create a new migration file or edit the existing `00000000000000_init.sql`.
+Map your TypeScript types to PostgreSQL tables. Create a new migration file or edit the existing `00000000000000_core_schema.sql`.
 
 **Guidelines:**
 

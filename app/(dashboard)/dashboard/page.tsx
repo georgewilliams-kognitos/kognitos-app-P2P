@@ -1,20 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import {
   Clock,
-  CheckCircle,
-  XCircle,
-  ClipboardList,
+  Building2,
   Zap,
-  DollarSign,
   ArrowUpRight,
   ArrowDownRight,
+  Check,
+  X,
+  FileCheck,
+  ThumbsUp,
+  ThumbsDown,
+  ChevronFirst,
+  ChevronLast,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -26,74 +32,45 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
-import { StatusBadge } from "@/components/domain/status-badge";
 import { Badge } from "@/components/ui/badge";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
+import { Button } from "@/components/ui/button";
 
 import { DOMAIN } from "@/lib/domain.config";
-import { listRequests, queryInsights, queryMetrics } from "@/lib/api";
 import {
-  queryAvgTimeToDecision,
-  queryApprovalRate,
-  queryRejectionRate,
-  queryStatusBreakdown,
-  queryCategoryBreakdown,
-} from "@/lib/queries";
-import type {
-  Request,
-  KognitosInsights,
-  KognitosMetricResult,
-} from "@/lib/types";
+  getKognitosInsightsCacheFromDb,
+  listKognitosRunRowsFromDb,
+  type KognitosRunRow,
+} from "@/lib/api";
+import type { KognitosInsights } from "@/lib/types";
+import { aggregateResults, type P2PInsights } from "@/lib/p2p-insights";
+import {
+  averageRunDurationMs,
+  formatDurationMs,
+  topVendorFromRuns,
+} from "@/lib/kognitos/dashboard-metrics";
+import {
+  formatRunTime,
+  getCompletedTimeFromRun,
+  getRunStateDisplayLabel,
+  getRunStateLabel,
+  getStateReason,
+  isCompletedRun,
+  kognitosRunOpenHref,
+  runIdFromName,
+  type RunStateLabel,
+} from "@/lib/kognitos/run-dashboard";
 
-// ── Colors ──────────────────────────────────────────────────────
+/** Bar chart fills: solid oklch, higher chroma / lower L for contrast on light UI (no gradients). */
+const CHART_BAR = {
+  track:
+    "rounded-full border border-border/75 bg-[oklch(0.94_0.012_260)] dark:bg-muted/50",
+  pass: "bg-[oklch(0.52_0.17_158)]",
+  fail: "bg-[oklch(0.50_0.19_25)]",
+  /** Slightly lighter than `pass` so thin row bars stay legible without matching the heavy split bar. */
+  passRow: "bg-[oklch(0.56_0.155_159)]",
+} as const;
 
-const COLORS = {
-  brand: "oklch(0.858 0.164 114.307)",
-  success: "oklch(0.635 0.185 147.775)",
-  destructive: "oklch(0.577 0.245 27.325)",
-  warning: "oklch(0.769 0.165 70.08)",
-  informative: "oklch(0.615 0.133 261.34)",
-  gray: "oklch(0.556 0 0)",
-};
-
-/* CUSTOMIZE: Map your statuses to chart colors. */
-const STATUS_COLORS: Record<string, string> = {
-  draft: COLORS.gray,
-  submitted: COLORS.informative,
-  under_review: COLORS.warning,
-  approved: COLORS.success,
-  rejected: COLORS.destructive,
-  closed: COLORS.gray,
-};
-
-const CATEGORY_COLORS = [
-  COLORS.brand,
-  COLORS.informative,
-  COLORS.warning,
-  COLORS.success,
-  COLORS.destructive,
-  "oklch(0.733 0.158 302.329)",
-  "oklch(0.741 0.199 147.068)",
-  "oklch(0.759 0.113 210.52)",
-];
+const RUN_TABLE_PAGE_SIZE = 20;
 
 const currencyFmt = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -101,6 +78,65 @@ const currencyFmt = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 0,
 });
+
+const stateBadgeVariant: Record<
+  RunStateLabel,
+  "success" | "destructive" | "warning" | "secondary" | "default"
+> = {
+  completed: "success",
+  failed: "destructive",
+  executing: "warning",
+  pending: "secondary",
+  stopped: "warning",
+  stopping: "warning",
+  paused: "warning",
+  awaitingGuidance: "default",
+  unknown: "secondary",
+};
+
+function CheckOrCross({ pass }: { pass: boolean | undefined }) {
+  if (pass === undefined) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return pass ? (
+    <Check className="inline-block h-4 w-4 text-success" />
+  ) : (
+    <X className="inline-block h-4 w-4 text-destructive" />
+  );
+}
+
+/** Empty P2P aggregate for display before first sync (matches `aggregateResults([], [])`). */
+const EMPTY_P2P_INSIGHTS: P2PInsights = aggregateResults([], []);
+
+/** KPI row above “Completed checks” — same layout as Vercel-Test home dashboard. */
+function FourWayMatchKpiCard({
+  label,
+  value,
+  description,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  description?: string;
+  icon: React.ElementType;
+}) {
+  return (
+    <Card className="gap-4 rounded-xl py-5">
+      <CardContent className="flex items-start justify-between px-5">
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-muted-foreground">{label}</p>
+          <p className="text-2xl font-bold tracking-tight">{value}</p>
+          {description && (
+            <p className="text-xs text-muted-foreground">{description}</p>
+          )}
+        </div>
+        <div className="rounded-md bg-primary/10 p-2.5">
+          <Icon className="h-5 w-5 text-primary" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 // ── KPI Card ────────────────────────────────────────────────────
 
@@ -110,19 +146,24 @@ function KpiCard({
   icon: Icon,
   trend,
   trendDirection,
+  description,
 }: {
   label: string;
   value: string;
   icon: React.ElementType;
   trend?: string;
   trendDirection?: "up" | "down";
+  description?: string;
 }) {
   return (
     <Card className="gap-4 py-5">
       <CardContent className="flex items-start justify-between px-5">
-        <div className="space-y-1">
+        <div className="min-w-0 flex-1 space-y-1">
           <p className="text-sm font-medium text-muted-foreground">{label}</p>
-          <p className="text-2xl font-bold tracking-tight">{value}</p>
+          <p className="text-2xl font-bold tracking-tight break-words">{value}</p>
+          {description && (
+            <p className="text-xs text-muted-foreground">{description}</p>
+          )}
           {trend && (
             <div
               className={`flex items-center gap-1 text-xs font-medium ${
@@ -146,111 +187,27 @@ function KpiCard({
   );
 }
 
-// ── Drill-Down Table ────────────────────────────────────────────
-
-function DrillDownTable({ items }: { items: Request[] }) {
-  return (
-    <div className="flex-1 overflow-auto">
-      <Table>
-        <TableHeader className="sticky top-0 z-10 bg-background">
-          <TableRow>
-            <TableHead>ID</TableHead>
-            <TableHead>Title</TableHead>
-            <TableHead>Category</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Est. Value</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {items.length === 0 && (
-            <TableRow>
-              <TableCell
-                colSpan={5}
-                className="py-8 text-center text-muted-foreground"
-              >
-                No {DOMAIN.entity.plural.toLowerCase()} match this filter
-              </TableCell>
-            </TableRow>
-          )}
-          {items.map((r) => (
-            <TableRow key={r.id}>
-              <TableCell>
-                <Link
-                  href={`/${DOMAIN.entitySlug}/${r.id}`}
-                  className="font-medium text-primary hover:underline"
-                >
-                  {r.id}
-                </Link>
-              </TableCell>
-              <TableCell className="max-w-[180px] truncate">
-                {r.title}
-              </TableCell>
-              <TableCell>{r.category}</TableCell>
-              <TableCell>
-                <StatusBadge status={r.status} />
-              </TableCell>
-              <TableCell className="text-right">
-                {currencyFmt.format(r.estimated_value)}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
-  );
-}
-
 // ── Dashboard Page ──────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const [requests, setRequests] = useState<Request[]>([]);
-  const [avgTime, setAvgTime] = useState(0);
-  const [approvalRate, setApprovalRate] = useState(0);
-  const [rejectionRate, setRejectionRate] = useState(0);
-  const [statusData, setStatusData] = useState<
-    { status: string; count: number }[]
-  >([]);
-  const [categoryData, setCategoryData] = useState<
-    { category: string; count: number }[]
-  >([]);
   const [insights, setInsights] = useState<KognitosInsights | null>(null);
-  const [metrics, setMetrics] = useState<KognitosMetricResult[]>([]);
-  const [drillDown, setDrillDown] = useState<{
-    title: string;
-    items: Request[];
-  } | null>(null);
+  const [p2p, setP2p] = useState<P2PInsights | null>(null);
+  const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
+  const [completedPage, setCompletedPage] = useState(0);
+  const [incompletePage, setIncompletePage] = useState(0);
 
   function loadDashboardData() {
     Promise.all([
-      listRequests(),
-      queryAvgTimeToDecision(),
-      queryApprovalRate(),
-      queryRejectionRate(),
-      queryStatusBreakdown(),
-      queryCategoryBreakdown(),
-      queryInsights(),
-      queryMetrics(),
-    ]).then(
-      ([
-        reqs,
-        avgT,
-        appRate,
-        rejRate,
-        statusBk,
-        catBk,
-        ins,
-        metricRes,
-      ]) => {
-        setRequests(reqs);
-        setAvgTime(avgT);
-        setApprovalRate(appRate);
-        setRejectionRate(rejRate);
-        setStatusData(statusBk);
-        setCategoryData(catBk);
-        setInsights(ins);
-        setMetrics(metricRes.results);
-      },
-    );
+      getKognitosInsightsCacheFromDb(),
+      listKognitosRunRowsFromDb().catch((err) => {
+        console.error("listKognitosRunRowsFromDb:", err);
+        return [] as KognitosRunRow[];
+      }),
+    ]).then(([cache, rows]) => {
+      setInsights(cache.insights);
+      setP2p(cache.p2p);
+      setRunRows(rows);
+    });
   }
 
   useEffect(() => {
@@ -263,33 +220,99 @@ export default function DashboardPage() {
     return () => window.removeEventListener("chat-data-changed", handler);
   }, []);
 
-  const totalMoneySaved = insights
-    ? parseFloat(insights.valueInsight.totalMoneySavedUsd)
-    : 0;
-  const totalRuns = insights?.runInsight.totalRunsCount ?? 0;
+  const { completedRunRows, incompleteRunRows } = useMemo(() => {
+    const completed = runRows.filter((row) =>
+      isCompletedRun(row.run, p2p),
+    );
+    const incomplete = runRows.filter((row) => !isCompletedRun(row.run, p2p));
+    return { completedRunRows: completed, incompleteRunRows: incomplete };
+  }, [runRows, p2p]);
 
-  const statusChartData = useMemo(
-    () =>
-      statusData.map((d) => ({
-        name: d.status
-          .replace(/_/g, " ")
-          .replace(/\b\w/g, (c) => c.toUpperCase()),
-        value: d.count,
-        fill: STATUS_COLORS[d.status] ?? COLORS.gray,
-        rawStatus: d.status,
-      })),
-    [statusData],
+  /** Prefer Supabase-synced runs; Kognitos queryInsights totals are often 0 or window-scoped. */
+  const totalRunsDisplay = useMemo(() => {
+    if (runRows.length > 0) return runRows.length;
+    return insights?.runInsight.totalRunsCount ?? 0;
+  }, [runRows.length, insights]);
+
+  const stpDisplay = useMemo(() => {
+    if (runRows.length > 0) {
+      return Math.round((completedRunRows.length / runRows.length) * 100);
+    }
+    return insights?.completionInsight.stp ?? 0;
+  }, [runRows.length, completedRunRows.length, insights]);
+
+  const awaitingGuidanceDisplay = useMemo(() => {
+    if (runRows.length > 0) {
+      return runRows.filter(
+        (r) => getRunStateLabel(r.run.state) === "awaitingGuidance",
+      ).length;
+    }
+    return insights?.awaitingGuidanceInsight.totalRunsAwaitingGuidance ?? 0;
+  }, [runRows, insights]);
+
+  const timeSavedMinutes = useMemo(() => {
+    const secs = insights?.valueInsight.totalTimeSavedSecs ?? 0;
+    return Math.round(secs / 60);
+  }, [insights]);
+
+  const p2pForWidgets = useMemo(
+    () => p2p ?? EMPTY_P2P_INSIGHTS,
+    [p2p],
   );
 
-  const categoryChartData = useMemo(
-    () =>
-      categoryData.map((d, i) => ({
-        name: d.category,
-        value: d.count,
-        fill: CATEGORY_COLORS[i % CATEGORY_COLORS.length],
-      })),
-    [categoryData],
+  const avgRunDurationMs = useMemo(
+    () => averageRunDurationMs(completedRunRows.map((r) => r.run)),
+    [completedRunRows],
   );
+
+  const topVendor = useMemo(
+    () => topVendorFromRuns(runRows.map((r) => r.run)),
+    [runRows],
+  );
+
+  const completedLastPage = useMemo(
+    () =>
+      Math.max(
+        0,
+        Math.ceil(completedRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
+      ),
+    [completedRunRows.length],
+  );
+
+  const completedPagedRows = useMemo(() => {
+    const start = completedPage * RUN_TABLE_PAGE_SIZE;
+    return completedRunRows.slice(start, start + RUN_TABLE_PAGE_SIZE);
+  }, [completedRunRows, completedPage]);
+
+  const incompleteLastPage = useMemo(
+    () =>
+      Math.max(
+        0,
+        Math.ceil(incompleteRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
+      ),
+    [incompleteRunRows.length],
+  );
+
+  const incompletePagedRows = useMemo(() => {
+    const start = incompletePage * RUN_TABLE_PAGE_SIZE;
+    return incompleteRunRows.slice(start, start + RUN_TABLE_PAGE_SIZE);
+  }, [incompleteRunRows, incompletePage]);
+
+  useEffect(() => {
+    const maxPage = Math.max(
+      0,
+      Math.ceil(completedRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
+    );
+    if (completedPage > maxPage) setCompletedPage(maxPage);
+  }, [completedRunRows.length, completedPage]);
+
+  useEffect(() => {
+    const maxPage = Math.max(
+      0,
+      Math.ceil(incompleteRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
+    );
+    if (incompletePage > maxPage) setIncompletePage(maxPage);
+  }, [incompleteRunRows.length, incompletePage]);
 
   return (
     <div className="space-y-6">
@@ -300,158 +323,41 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* KPI Cards — CUSTOMIZE: Adjust KPIs for your domain. */}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <KpiCard
-          label="Avg Time to Decision"
-          value={`${avgTime.toFixed(1)} days`}
+          label="Average Run Time"
+          value={formatDurationMs(avgRunDurationMs)}
           icon={Clock}
         />
         <KpiCard
-          label="Approval Rate"
-          value={`${Math.round(approvalRate)}%`}
-          icon={CheckCircle}
+          label="Top Vendor"
+          value={topVendor?.vendor ?? "—"}
+          icon={Building2}
+          description={
+            topVendor && topVendor.count > 1
+              ? `${topVendor.count} runs`
+              : topVendor
+                ? "1 run"
+                : undefined
+          }
         />
-        <KpiCard
-          label="Rejection Rate"
-          value={`${Math.round(rejectionRate)}%`}
-          icon={XCircle}
-        />
-        <KpiCard
-          label={`Total ${DOMAIN.entity.plural}`}
-          value={requests.length.toString()}
-          icon={ClipboardList}
-        />
-        <KpiCard
-          label="Kognitos Runs"
-          value={totalRuns.toString()}
-          icon={Zap}
-        />
-        <KpiCard
-          label="Money Saved"
-          value={currencyFmt.format(totalMoneySaved)}
-          icon={DollarSign}
-        />
-      </div>
-
-      {/* Charts 2-up */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Status PieChart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>{DOMAIN.entity.plural} by Status</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Click a slice to see {DOMAIN.entity.plural.toLowerCase()}
-            </p>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={statusChartData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={110}
-                  paddingAngle={2}
-                  dataKey="value"
-                  nameKey="name"
-                  label={({ name, value }) => `${name}: ${value}`}
-                  fontSize={11}
-                  className="cursor-pointer"
-                  onClick={(data) => {
-                    const status = data.rawStatus;
-                    setDrillDown({
-                      title: `${data.name} (${data.value})`,
-                      items: requests.filter((r) => r.status === status),
-                    });
-                  }}
-                >
-                  {statusChartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Category BarChart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>{DOMAIN.entity.plural} by Category</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Click a bar to see {DOMAIN.entity.plural.toLowerCase()}
-            </p>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={categoryChartData} layout="vertical">
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  className="stroke-muted"
-                  horizontal={false}
-                />
-                <XAxis
-                  type="number"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                  width={120}
-                />
-                <Tooltip
-                  contentStyle={{
-                    borderRadius: "8px",
-                    border: "1px solid hsl(var(--border))",
-                    boxShadow: "0 2px 8px rgba(0,0,0,.08)",
-                  }}
-                />
-                <Bar
-                  dataKey="value"
-                  radius={[0, 4, 4, 0]}
-                  barSize={28}
-                  name="Count"
-                  className="cursor-pointer"
-                  onClick={(data) => {
-                    const payload = (
-                      data as unknown as {
-                        payload: { name: string; value: number };
-                      }
-                    ).payload;
-                    setDrillDown({
-                      title: `${payload.name} (${payload.value})`,
-                      items: requests.filter(
-                        (r) => r.category === payload.name,
-                      ),
-                    });
-                  }}
-                >
-                  {categoryChartData.map((entry, index) => (
-                    <Cell key={`cat-${index}`} fill={entry.fill} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
       </div>
 
       {/* CUSTOMIZE: Kognitos Metrics Section */}
-      {insights && (
+      {(insights != null || runRows.length > 0) && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Zap className="h-5 w-5 text-primary" />
               Kognitos Automation Insights
             </CardTitle>
+            {runRows.length > 0 && (
+              <p className="text-sm text-muted-foreground">
+                Run count, completion rate, and awaiting guidance reflect synced
+                runs in this app. Other values use the Kognitos dashboard API
+                when available.
+              </p>
+            )}
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -459,14 +365,14 @@ export default function DashboardPage() {
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                   Total Runs
                 </p>
-                <p className="text-lg font-bold">{totalRuns}</p>
+                <p className="text-lg font-bold">{totalRunsDisplay}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  STP Rate
+                  {runRows.length > 0 ? "Completion rate" : "STP Rate"}
                 </p>
                 <p className="text-lg font-bold">
-                  {insights.completionInsight.stp}%
+                  {stpDisplay}%
                 </p>
               </div>
               <div className="space-y-1">
@@ -474,8 +380,7 @@ export default function DashboardPage() {
                   Time Saved
                 </p>
                 <p className="text-lg font-bold">
-                  {Math.round(insights.valueInsight.totalTimeSavedSecs / 60)}{" "}
-                  min
+                  {timeSavedMinutes} min
                 </p>
               </div>
               <div className="space-y-1">
@@ -483,13 +388,14 @@ export default function DashboardPage() {
                   Awaiting Guidance
                 </p>
                 <p className="text-lg font-bold">
-                  {insights.awaitingGuidanceInsight.totalRunsAwaitingGuidance}
+                  {awaitingGuidanceDisplay}
                 </p>
               </div>
             </div>
 
             {/* Completions per period */}
-            {insights.completionInsight.completionsPerPeriod.length > 0 && (
+            {(insights?.completionInsight?.completionsPerPeriod?.length ?? 0) >
+              0 && (
               <div className="mt-4">
                 <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                   Completions per Period
@@ -507,7 +413,7 @@ export default function DashboardPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {insights.completionInsight.completionsPerPeriod.map(
+                    {insights!.completionInsight.completionsPerPeriod.map(
                       (p) => (
                         <TableRow key={p.windowLabel}>
                           <TableCell>{p.windowLabel}</TableCell>
@@ -528,27 +434,469 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      {/* Drill-Down Sheet */}
-      <Sheet
-        open={drillDown !== null}
-        onOpenChange={(open) => {
-          if (!open) setDrillDown(null);
-        }}
-      >
-        <SheetContent side="right" className="w-full sm:max-w-2xl lg:max-w-4xl">
-          <SheetHeader>
-            <SheetTitle>{drillDown?.title}</SheetTitle>
-            <SheetDescription>
-              {drillDown?.items.length ?? 0}{" "}
-              {(drillDown?.items.length ?? 0) !== 1
-                ? DOMAIN.entity.plural.toLowerCase()
-                : DOMAIN.entity.singular.toLowerCase()}{" "}
-              — click an ID to view details
-            </SheetDescription>
-          </SheetHeader>
-          {drillDown && <DrillDownTable items={drillDown.items} />}
-        </SheetContent>
-      </Sheet>
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+            <FourWayMatchKpiCard
+              label="Runs analyzed"
+              value={p2pForWidgets.runsAnalyzed.toString()}
+              description="Completed runs with validation data"
+              icon={FileCheck}
+            />
+            <FourWayMatchKpiCard
+              label="Total Approved Payments"
+              value={currencyFmt.format(p2pForWidgets.totalApprovedValue)}
+              description={`${p2pForWidgets.paymentApproveCount} recommended for payment`}
+              icon={ThumbsUp}
+            />
+            <FourWayMatchKpiCard
+              label="Total Rejected Payments"
+              value={currencyFmt.format(p2pForWidgets.totalRejectedValue)}
+              description={`${p2pForWidgets.paymentRejectCount} reject or hold`}
+              icon={ThumbsDown}
+            />
+          </div>
+
+          <Card className="rounded-xl">
+            <CardHeader>
+              <CardTitle>Validations</CardTitle>
+              <CardDescription>
+                4-way match PASS vs FAIL across runs
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                const pass = p2pForWidgets.validationPass;
+                const fail = p2pForWidgets.validationFail;
+                const total = pass + fail;
+                const passPct = total > 0 ? (100 * pass) / total : 0;
+                const failPct = total > 0 ? (100 * fail) / total : 0;
+                return (
+                  <div className="space-y-2">
+                    <div
+                      className={`flex h-7 w-full overflow-hidden p-0.5 ${CHART_BAR.track}`}
+                    >
+                      <div
+                        className={`h-full min-w-0 transition-[width] duration-300 ease-out ${CHART_BAR.pass} ${
+                          passPct <= 0
+                            ? "hidden"
+                            : failPct <= 0
+                              ? "rounded-full"
+                              : "rounded-l-full"
+                        }`}
+                        style={{ width: `${passPct}%` }}
+                      />
+                      <div
+                        className={`h-full min-w-0 transition-[width] duration-300 ease-out ${CHART_BAR.fail} ${
+                          failPct <= 0
+                            ? "hidden"
+                            : passPct <= 0
+                              ? "rounded-full"
+                              : "rounded-r-full"
+                        }`}
+                        style={{ width: `${failPct}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {pass} passed · {fail} failed
+                    </p>
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-xl">
+            <CardHeader>
+              <CardTitle>Validation check pass rates</CardTitle>
+              <CardDescription>
+                Pass percentage per check type
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {(
+                [
+                  { key: "documentMatch" as const, label: "1 - Document Match" },
+                  {
+                    key: "quantityAndUnitMatch" as const,
+                    label: "2 - Quantity and Unit Match",
+                  },
+                  { key: "valueMatch" as const, label: "3 - Value Match" },
+                  { key: "coaValidation" as const, label: "4 - COA Validation" },
+                ] as const
+              ).map(({ key, label }) => {
+                const pct = p2pForWidgets.checkPercentages[key] ?? 0;
+                return (
+                  <div key={key} className="flex items-center gap-4">
+                    <span className="w-[14rem] shrink-0 text-sm font-medium">
+                      {label}
+                    </span>
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <div
+                        className={`h-5 min-w-0 flex-1 overflow-hidden p-px ${CHART_BAR.track}`}
+                      >
+                        <div
+                          className={`h-full rounded-full ${CHART_BAR.passRow} transition-[width] duration-300 ease-out`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="w-10 text-right text-sm tabular-nums text-muted-foreground">
+                        {pct}%
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Completed checks</CardTitle>
+            <CardDescription>
+              Runs that finished with a completed state (4-way match and related
+              outputs when available)
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {completedRunRows.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No completed runs in the database yet.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                <div className="max-w-full overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>PO Number</TableHead>
+                        <TableHead>Invoice Number</TableHead>
+                        <TableHead>Goods Receipt</TableHead>
+                        <TableHead
+                          className="w-10 text-center"
+                          title="Document Match"
+                        >
+                          1
+                        </TableHead>
+                        <TableHead
+                          className="w-10 text-center"
+                          title="Quantity and Unit Match"
+                        >
+                          2
+                        </TableHead>
+                        <TableHead
+                          className="w-10 text-center"
+                          title="Value Match"
+                        >
+                          3
+                        </TableHead>
+                        <TableHead
+                          className="w-10 text-center"
+                          title="COA Validation"
+                        >
+                          4
+                        </TableHead>
+                        <TableHead
+                          className="w-10 text-center"
+                          title="Payment approval"
+                        >
+                          P
+                        </TableHead>
+                        <TableHead className="text-right">Value</TableHead>
+                        <TableHead className="text-right">Completed</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {completedPagedRows.map(({ run }) => {
+                      const runId = runIdFromName(run.name);
+                      const enriched = p2p?.runs?.find((r) => r.runId === runId);
+                      const state = getRunStateLabel(run.state);
+                      const completedTimeStr =
+                        state === "completed"
+                          ? formatRunTime(
+                              enriched?.completedTime ??
+                                getCompletedTimeFromRun(run),
+                            )
+                          : "—";
+                      const href = kognitosRunOpenHref(run.name);
+                      return (
+                        <TableRow key={run.name}>
+                          <TableCell>{enriched?.poNumber ?? "—"}</TableCell>
+                          <TableCell>{enriched?.invoiceNumber ?? "—"}</TableCell>
+                          <TableCell>
+                            {enriched?.goodsReceiptNumber ?? "—"}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <CheckOrCross
+                              pass={enriched?.documentMatch === "PASS"}
+                            />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <CheckOrCross
+                              pass={enriched?.quantityAndUnitMatch === "PASS"}
+                            />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <CheckOrCross
+                              pass={enriched?.valueMatch === "PASS"}
+                            />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <CheckOrCross
+                              pass={enriched?.coaValidation === "PASS"}
+                            />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <CheckOrCross pass={enriched?.paymentApproved} />
+                          </TableCell>
+                          <TableCell className="text-right text-muted-foreground">
+                            {enriched?.poTotalValue != null
+                              ? new Intl.NumberFormat("en-US", {
+                                  style: "currency",
+                                  currency: "USD",
+                                  minimumFractionDigits: 0,
+                                  maximumFractionDigits: 2,
+                                }).format(enriched.poTotalValue)
+                              : "—"}
+                          </TableCell>
+                          <TableCell className="text-right text-muted-foreground">
+                            {state === "completed" ? (
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-muted-foreground hover:underline"
+                              >
+                                {completedTimeStr}
+                              </a>
+                            ) : (
+                              completedTimeStr
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Showing{" "}
+                    {completedRunRows.length === 0
+                      ? 0
+                      : completedPage * RUN_TABLE_PAGE_SIZE + 1}
+                    –
+                    {Math.min(
+                      (completedPage + 1) * RUN_TABLE_PAGE_SIZE,
+                      completedRunRows.length,
+                    )}{" "}
+                    of {completedRunRows.length}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-8"
+                      aria-label="First page"
+                      disabled={completedPage <= 0}
+                      onClick={() => setCompletedPage(0)}
+                    >
+                      <ChevronFirst className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Previous page"
+                      disabled={completedPage <= 0}
+                      onClick={() =>
+                        setCompletedPage((p) => Math.max(0, p - 1))
+                      }
+                    >
+                      <ChevronLeft className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Next page"
+                      disabled={completedPage >= completedLastPage}
+                      onClick={() =>
+                        setCompletedPage((p) =>
+                          Math.min(completedLastPage, p + 1),
+                        )
+                      }
+                    >
+                      <ChevronRight className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Last page"
+                      disabled={completedPage >= completedLastPage}
+                      onClick={() => setCompletedPage(completedLastPage)}
+                    >
+                      <ChevronLast className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Incomplete checks</CardTitle>
+            <CardDescription>
+              Runs pending, in progress, failed, stopped, or awaiting guidance
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {incompleteRunRows.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No incomplete runs.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                <div className="max-w-full overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Run ID</TableHead>
+                        <TableHead>Started At</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead className="text-right">
+                          More details
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {incompletePagedRows.map(({ run }) => {
+                        const state = getRunStateLabel(run.state);
+                        const href = kognitosRunOpenHref(run.name);
+                        return (
+                          <TableRow key={run.name}>
+                            <TableCell className="max-w-[120px] truncate font-mono text-xs">
+                              {runIdFromName(run.name)}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {formatRunTime(run.createTime)}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={
+                                  stateBadgeVariant[state] ?? "secondary"
+                                }
+                                className={
+                                  state === "stopped"
+                                    ? "border-transparent bg-warning/20 text-foreground"
+                                    : state === "pending"
+                                      ? "border-transparent bg-muted text-foreground"
+                                      : undefined
+                                }
+                              >
+                                {getRunStateDisplayLabel(state)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {getStateReason(run.state)}
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground">
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-muted-foreground hover:underline"
+                              >
+                                See Run
+                              </a>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Showing{" "}
+                    {incompleteRunRows.length === 0
+                      ? 0
+                      : incompletePage * RUN_TABLE_PAGE_SIZE + 1}
+                    –
+                    {Math.min(
+                      (incompletePage + 1) * RUN_TABLE_PAGE_SIZE,
+                      incompleteRunRows.length,
+                    )}{" "}
+                    of {incompleteRunRows.length}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-8"
+                      aria-label="First page"
+                      disabled={incompletePage <= 0}
+                      onClick={() => setIncompletePage(0)}
+                    >
+                      <ChevronFirst className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Previous page"
+                      disabled={incompletePage <= 0}
+                      onClick={() =>
+                        setIncompletePage((p) => Math.max(0, p - 1))
+                      }
+                    >
+                      <ChevronLeft className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Next page"
+                      disabled={incompletePage >= incompleteLastPage}
+                      onClick={() =>
+                        setIncompletePage((p) =>
+                          Math.min(incompleteLastPage, p + 1),
+                        )
+                      }
+                    >
+                      <ChevronRight className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Last page"
+                      disabled={incompletePage >= incompleteLastPage}
+                      onClick={() => setIncompletePage(incompleteLastPage)}
+                    >
+                      <ChevronLast className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
     </div>
   );
 }

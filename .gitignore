@@ -42,3 +42,12 @@ next-env.d.ts
 .env*.local
 .env*
 supabase/.temp/
+supabase/.branches/
+
+# Cursor / local scratch
+.cursor/
+
+# Large local DB dumps (use Supabase CLI or CI to generate)
+supabase/seed.sql
+supabase/kognitos_run_events.part*.csv
+out.csv

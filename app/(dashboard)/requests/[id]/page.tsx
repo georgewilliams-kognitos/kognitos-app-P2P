@@ -14,11 +14,7 @@ import {
   XCircle,
   CheckCircle,
   Play,
-  CircleDot,
-  ChevronDown,
-  ChevronUp,
   Cpu,
-  Zap,
 } from "lucide-react";
 
 import {
@@ -27,8 +23,7 @@ import {
   getDocumentsForRequest,
   getCommentsForRequest,
   getAuditEventsForRequest,
-  getRun,
-  getRunEvents,
+  getKognitosRunFromDb,
 } from "@/lib/api";
 import { DOMAIN } from "@/lib/domain.config";
 import { useAuth } from "@/lib/auth-context";
@@ -51,7 +46,6 @@ import type {
   Comment,
   AuditEvent,
   KognitosRun,
-  KognitosRunEvent,
 } from "@/lib/types";
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -73,71 +67,6 @@ function nextAction(status: string): string {
     closed: "No further action needed",
   };
   return actions[status] ?? "No action needed";
-}
-
-// ── SOP Run Trace Event ─────────────────────────────────────────
-
-function RunTraceEvent({
-  event,
-  isUpdate,
-}: {
-  event: KognitosRunEvent;
-  isUpdate: boolean;
-}) {
-  const [detailOpen, setDetailOpen] = useState(false);
-  const hasDetails = event.details && Object.keys(event.details).length > 0;
-
-  return (
-    <div className="relative flex gap-3 py-2 pl-0">
-      <div className="relative z-10 flex shrink-0 items-center justify-center">
-        {isUpdate ? (
-          <div className="flex size-[30px] items-center justify-center rounded-full border-2 border-primary bg-background">
-            <CircleDot className="size-3.5 text-primary" />
-          </div>
-        ) : (
-          <div className="flex size-[30px] items-center justify-center rounded-full border bg-muted">
-            <Play className="size-3 text-muted-foreground" />
-          </div>
-        )}
-      </div>
-
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={`text-sm ${isUpdate ? "font-semibold" : "font-medium"}`}
-          >
-            {event.description}
-          </span>
-          <Badge variant="outline" className="text-[10px] capitalize">
-            {event.type === "runUpdate" ? "milestone" : "step"}
-          </Badge>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {format(new Date(event.timestamp), "h:mm:ss a")}
-        </p>
-
-        {hasDetails && (
-          <button
-            type="button"
-            className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-            onClick={() => setDetailOpen((prev) => !prev)}
-          >
-            {detailOpen ? (
-              <ChevronUp className="size-3" />
-            ) : (
-              <ChevronDown className="size-3" />
-            )}
-            {detailOpen ? "Hide details" : "Show details"}
-          </button>
-        )}
-        {detailOpen && hasDetails && (
-          <pre className="mt-1 max-h-48 overflow-auto rounded-md border bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
-            {JSON.stringify(event.details, null, 2)}
-          </pre>
-        )}
-      </div>
-    </div>
-  );
 }
 
 // ── Main Page ───────────────────────────────────────────────────
@@ -162,8 +91,6 @@ export default function RequestDetailPage({
     new Map(),
   );
   const [run, setRun] = useState<KognitosRun | null>(null);
-  const [runEvents, setRunEvents] = useState<KognitosRunEvent[]>([]);
-  const [traceExpanded, setTraceExpanded] = useState(true);
 
   function refreshRequest() {
     getRequestById(id).then((r) => {
@@ -174,10 +101,11 @@ export default function RequestDetailPage({
       setRequest(r);
       getUserById(r.requester_id).then((u) => setRequester(u ?? null));
       if (r.kognitos_run_id) {
-        getRun(r.kognitos_run_id).then((run) => setRun(run ?? null));
-        getRunEvents(r.kognitos_run_id).then((res) =>
-          setRunEvents(res.runEvents),
+        getKognitosRunFromDb(r.kognitos_run_id).then((run) =>
+          setRun(run ?? null),
         );
+      } else {
+        setRun(null);
       }
     });
     getDocumentsForRequest(id).then(setDocuments);
@@ -222,7 +150,7 @@ export default function RequestDetailPage({
           &rdquo;.
         </p>
         <Button asChild variant="outline">
-          <Link href="/">
+          <Link href="/worklist">
             <ArrowLeft className="size-4" />
             Back to Worklist
           </Link>
@@ -248,7 +176,7 @@ export default function RequestDetailPage({
     <div className="space-y-6">
       {/* Back link */}
       <Button asChild variant="ghost" size="sm" className="-ml-2">
-        <Link href="/">
+        <Link href="/worklist">
           <ArrowLeft className="size-4" />
           All {DOMAIN.entity.plural}
         </Link>
@@ -680,52 +608,10 @@ export default function RequestDetailPage({
                       </Card>
                     )}
 
-                    {/* Execution Trace */}
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between"
-                          onClick={() => setTraceExpanded((prev) => !prev)}
-                        >
-                          <CardTitle className="flex items-center gap-2 text-base">
-                            <Zap className="size-4 text-amber-500" />
-                            Execution Trace ({runEvents.length} events)
-                          </CardTitle>
-                          {traceExpanded ? (
-                            <ChevronUp className="size-4 text-muted-foreground" />
-                          ) : (
-                            <ChevronDown className="size-4 text-muted-foreground" />
-                          )}
-                        </button>
-                      </CardHeader>
-                      {traceExpanded && (
-                        <CardContent>
-                          {runEvents.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">
-                              No execution events recorded.
-                            </p>
-                          ) : (
-                            <div className="relative space-y-0">
-                              <div className="absolute bottom-2 left-[15px] top-2 w-px bg-border" />
-                              {[...runEvents]
-                                .sort(
-                                  (a, b) =>
-                                    new Date(a.timestamp).getTime() -
-                                    new Date(b.timestamp).getTime(),
-                                )
-                                .map((event, idx) => (
-                                  <RunTraceEvent
-                                    key={`${event.runId}-${event.type}-${idx}`}
-                                    event={event}
-                                    isUpdate={event.type === "runUpdate"}
-                                  />
-                                ))}
-                            </div>
-                          )}
-                        </CardContent>
-                      )}
-                    </Card>
+                    <p className="text-xs text-muted-foreground">
+                      Step-level execution traces are not synced to this app. Open the
+                      run in Kognitos for the full execution journal.
+                    </p>
                   </>
                 )}
               </TabsContent>

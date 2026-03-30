@@ -38,7 +38,6 @@ const ICON_MAP: Record<string, LucideIcon> = {
 const LogoIcon = ICON_MAP[DOMAIN.appLogo] ?? Layers;
 
 function isActive(pathname: string, href: string) {
-  if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(href + "/");
 }
 

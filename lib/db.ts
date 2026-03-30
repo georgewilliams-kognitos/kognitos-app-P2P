@@ -14,7 +14,11 @@ import type {
   AuditEvent,
   Notification,
   Rule,
+  KognitosRun,
+  KognitosInsights,
 } from "./types";
+import { parseKognitosRunPayload } from "./kognitos/map-run";
+import type { P2PInsights } from "./p2p-insights";
 
 /** Throws if Supabase client is not configured. */
 function sb() {
@@ -179,4 +183,61 @@ export async function markNotificationRead(id: string): Promise<void> {
     .update({ is_read: true })
     .eq("id", id);
   if (error) throw error;
+}
+
+// ── Kognitos (reads from synced Supabase tables) ───────────────
+
+export async function getKognitosRunFromDb(
+  runId: string,
+): Promise<KognitosRun | null> {
+  const { data, error } = await sb()
+    .from("kognitos_runs")
+    .select("payload")
+    .eq("id", runId)
+    .single();
+  if (error || !data) return null;
+  return parseKognitosRunPayload(data.payload);
+}
+
+export async function getKognitosInsightsCacheFromDb(): Promise<{
+  insights: KognitosInsights | null;
+  p2p: P2PInsights | null;
+}> {
+  const { data, error } = await sb()
+    .from("kognitos_insights_cache")
+    .select("insights_json, p2p_summary")
+    .eq("id", "default")
+    .maybeSingle();
+  if (error || !data) return { insights: null, p2p: null };
+  return {
+    insights: (data.insights_json as KognitosInsights) ?? null,
+    p2p: (data.p2p_summary as P2PInsights) ?? null,
+  };
+}
+
+export interface KognitosRunRow {
+  id: string;
+  name: string;
+  run: KognitosRun;
+}
+
+/** All synced runs for dashboard tables (newest first). */
+export async function listKognitosRunRowsFromDb(): Promise<KognitosRunRow[]> {
+  const { data, error } = await sb()
+    .from("kognitos_runs")
+    .select("id, name, payload")
+    .order("create_time", { ascending: false });
+  if (error) throw error;
+  const out: KognitosRunRow[] = [];
+  for (const row of data ?? []) {
+    const run = parseKognitosRunPayload(row.payload);
+    if (run) {
+      out.push({
+        id: String(row.id),
+        name: String(row.name),
+        run,
+      });
+    }
+  }
+  return out;
 }

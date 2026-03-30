@@ -66,8 +66,9 @@ export interface Request {
   closed_at: string | null;
   created_at: string;
   updated_at: string;
-  kognitos_run_id: string;
-  episode_id: string | null;
+  kognitos_run_id: string | null;
+  /** Denormalized label from the linked Kognitos run (`pending`, `completed`, …). */
+  kognitos_run_state?: string | null;
 }
 
 /** CUSTOMIZE: Adjust document metadata fields for your domain. */
@@ -124,6 +125,10 @@ export interface Rule {
   criteria: string;
   created_at: string;
   updated_at: string;
+  automation_id?: string | null;
+  total_runs?: number | null;
+  completed_runs?: number | null;
+  stp_rate?: number | null;
 }
 
 // ── Kognitos Integration Types ─────────────────────────────────

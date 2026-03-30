@@ -80,7 +80,8 @@ npx supabase db push
 The seed script upserts realistic test data into your Supabase tables:
 
 ```bash
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key npx tsx scripts/seed.ts
+`npm run seed` (loads `.env.local` from the project root), or  
+`SUPABASE_SERVICE_ROLE_KEY=… npx tsx scripts/seed.ts` if you prefer to pass env vars inline.
 ```
 
 You can find the service role key in your Supabase project settings under **API**.
@@ -197,13 +198,16 @@ See **[docs/BLUEPRINT.md](docs/BLUEPRINT.md)** for the complete architecture doc
 
 ## Scripts
 
+The Supabase CLI **skips** migration files whose names contain `init` (so the baseline schema uses `00000000000000_core_schema.sql`, not `*_init.sql`).
+
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Start the development server |
+| `npm run dev:restart` | Kill whatever is using port 3000, then start the dev server on 3000 (use after “redeploy locally”) |
 | `npm run build` | Build for production |
 | `npm run start` | Start the production server |
 | `npm run lint` | Run ESLint |
-| `npx tsx scripts/seed.ts` | Seed the Supabase database |
+| `npm run seed` | Seed the Supabase database (uses `.env.local` for URL + service role key) |
 | `npx supabase db push` | Push schema migrations to Supabase |
 
 ## Environment Variables
