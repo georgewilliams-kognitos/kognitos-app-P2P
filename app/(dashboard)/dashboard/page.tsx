@@ -70,14 +70,20 @@ import {
   type RunStateLabel,
 } from "@/lib/kognitos/run-dashboard";
 
-/** Bar chart fills: solid oklch, higher chroma / lower L for contrast on light UI (no gradients). */
+/** Bar chart fills using the approved yellow/olive palette (no gradients). */
 const CHART_BAR = {
+  // 1) rgb(207,219,76)  2) rgb(195,208,65)  3) rgb(183,196,53)
+  // 4) rgb(124,137,1)   5) rgb(99,109,2)
   track:
-    "rounded-full border border-border/75 bg-[oklch(0.94_0.012_260)] dark:bg-muted/50",
-  pass: "bg-[oklch(0.52_0.17_158)]",
-  fail: "bg-[oklch(0.50_0.19_25)]",
-  /** Slightly lighter than `pass` so thin row bars stay legible without matching the heavy split bar. */
-  passRow: "bg-[oklch(0.56_0.155_159)]",
+    "rounded-full border border-[#b7c435] bg-[#b7c435]/35 dark:bg-muted/50",
+  // 1st shade
+  pass: "bg-[#cfdb4c]",
+  // 3rd shade
+  fail: "bg-[#b7c435]",
+  // 2nd shade
+  passRow: "bg-[#c3d041]",
+  // 5th shade (reserved)
+  failRow: "bg-[#636d02]",
 } as const;
 
 const RUN_TABLE_PAGE_SIZE = 20;
@@ -268,12 +274,11 @@ export default function DashboardPage() {
       ),
     [completedRunRows.length],
   );
-  const completedPageSafe = Math.min(completedPage, completedLastPage);
 
   const completedPagedRows = useMemo(() => {
-    const start = completedPageSafe * RUN_TABLE_PAGE_SIZE;
+    const start = completedPage * RUN_TABLE_PAGE_SIZE;
     return completedRunRows.slice(start, start + RUN_TABLE_PAGE_SIZE);
-  }, [completedRunRows, completedPageSafe]);
+  }, [completedRunRows, completedPage]);
 
   const incompleteLastPage = useMemo(
     () =>
@@ -283,12 +288,27 @@ export default function DashboardPage() {
       ),
     [incompleteRunRows.length],
   );
-  const incompletePageSafe = Math.min(incompletePage, incompleteLastPage);
 
   const incompletePagedRows = useMemo(() => {
-    const start = incompletePageSafe * RUN_TABLE_PAGE_SIZE;
+    const start = incompletePage * RUN_TABLE_PAGE_SIZE;
     return incompleteRunRows.slice(start, start + RUN_TABLE_PAGE_SIZE);
-  }, [incompleteRunRows, incompletePageSafe]);
+  }, [incompleteRunRows, incompletePage]);
+
+  useEffect(() => {
+    const maxPage = Math.max(
+      0,
+      Math.ceil(completedRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
+    );
+    if (completedPage > maxPage) setCompletedPage(maxPage);
+  }, [completedRunRows.length, completedPage]);
+
+  useEffect(() => {
+    const maxPage = Math.max(
+      0,
+      Math.ceil(incompleteRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
+    );
+    if (incompletePage > maxPage) setIncompletePage(maxPage);
+  }, [incompleteRunRows.length, incompletePage]);
 
   return (
     <div className="space-y-6">
@@ -596,10 +616,10 @@ export default function DashboardPage() {
                     Showing{" "}
                     {completedRunRows.length === 0
                       ? 0
-                      : completedPageSafe * RUN_TABLE_PAGE_SIZE + 1}
+                      : completedPage * RUN_TABLE_PAGE_SIZE + 1}
                     –
                     {Math.min(
-                      (completedPageSafe + 1) * RUN_TABLE_PAGE_SIZE,
+                      (completedPage + 1) * RUN_TABLE_PAGE_SIZE,
                       completedRunRows.length,
                     )}{" "}
                     of {completedRunRows.length}
@@ -611,7 +631,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="First page"
-                      disabled={completedPageSafe <= 0}
+                      disabled={completedPage <= 0}
                       onClick={() => setCompletedPage(0)}
                     >
                       <ChevronFirst className="size-4" />
@@ -622,7 +642,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Previous page"
-                      disabled={completedPageSafe <= 0}
+                      disabled={completedPage <= 0}
                       onClick={() =>
                         setCompletedPage((p) => Math.max(0, p - 1))
                       }
@@ -635,7 +655,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Next page"
-                      disabled={completedPageSafe >= completedLastPage}
+                      disabled={completedPage >= completedLastPage}
                       onClick={() =>
                         setCompletedPage((p) =>
                           Math.min(completedLastPage, p + 1),
@@ -650,7 +670,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Last page"
-                      disabled={completedPageSafe >= completedLastPage}
+                      disabled={completedPage >= completedLastPage}
                       onClick={() => setCompletedPage(completedLastPage)}
                     >
                       <ChevronLast className="size-4" />
@@ -741,10 +761,10 @@ export default function DashboardPage() {
                     Showing{" "}
                     {incompleteRunRows.length === 0
                       ? 0
-                      : incompletePageSafe * RUN_TABLE_PAGE_SIZE + 1}
+                      : incompletePage * RUN_TABLE_PAGE_SIZE + 1}
                     –
                     {Math.min(
-                      (incompletePageSafe + 1) * RUN_TABLE_PAGE_SIZE,
+                      (incompletePage + 1) * RUN_TABLE_PAGE_SIZE,
                       incompleteRunRows.length,
                     )}{" "}
                     of {incompleteRunRows.length}
@@ -756,7 +776,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="First page"
-                      disabled={incompletePageSafe <= 0}
+                      disabled={incompletePage <= 0}
                       onClick={() => setIncompletePage(0)}
                     >
                       <ChevronFirst className="size-4" />
@@ -767,7 +787,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Previous page"
-                      disabled={incompletePageSafe <= 0}
+                      disabled={incompletePage <= 0}
                       onClick={() =>
                         setIncompletePage((p) => Math.max(0, p - 1))
                       }
@@ -780,7 +800,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Next page"
-                      disabled={incompletePageSafe >= incompleteLastPage}
+                      disabled={incompletePage >= incompleteLastPage}
                       onClick={() =>
                         setIncompletePage((p) =>
                           Math.min(incompleteLastPage, p + 1),
@@ -795,7 +815,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Last page"
-                      disabled={incompletePageSafe >= incompleteLastPage}
+                      disabled={incompletePage >= incompleteLastPage}
                       onClick={() => setIncompletePage(incompleteLastPage)}
                     >
                       <ChevronLast className="size-4" />
