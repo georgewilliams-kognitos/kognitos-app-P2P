@@ -268,11 +268,12 @@ export default function DashboardPage() {
       ),
     [completedRunRows.length],
   );
+  const completedPageSafe = Math.min(completedPage, completedLastPage);
 
   const completedPagedRows = useMemo(() => {
-    const start = completedPage * RUN_TABLE_PAGE_SIZE;
+    const start = completedPageSafe * RUN_TABLE_PAGE_SIZE;
     return completedRunRows.slice(start, start + RUN_TABLE_PAGE_SIZE);
-  }, [completedRunRows, completedPage]);
+  }, [completedRunRows, completedPageSafe]);
 
   const incompleteLastPage = useMemo(
     () =>
@@ -282,27 +283,12 @@ export default function DashboardPage() {
       ),
     [incompleteRunRows.length],
   );
+  const incompletePageSafe = Math.min(incompletePage, incompleteLastPage);
 
   const incompletePagedRows = useMemo(() => {
-    const start = incompletePage * RUN_TABLE_PAGE_SIZE;
+    const start = incompletePageSafe * RUN_TABLE_PAGE_SIZE;
     return incompleteRunRows.slice(start, start + RUN_TABLE_PAGE_SIZE);
-  }, [incompleteRunRows, incompletePage]);
-
-  useEffect(() => {
-    const maxPage = Math.max(
-      0,
-      Math.ceil(completedRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
-    );
-    if (completedPage > maxPage) setCompletedPage(maxPage);
-  }, [completedRunRows.length, completedPage]);
-
-  useEffect(() => {
-    const maxPage = Math.max(
-      0,
-      Math.ceil(incompleteRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
-    );
-    if (incompletePage > maxPage) setIncompletePage(maxPage);
-  }, [incompleteRunRows.length, incompletePage]);
+  }, [incompleteRunRows, incompletePageSafe]);
 
   return (
     <div className="space-y-6">
@@ -610,10 +596,10 @@ export default function DashboardPage() {
                     Showing{" "}
                     {completedRunRows.length === 0
                       ? 0
-                      : completedPage * RUN_TABLE_PAGE_SIZE + 1}
+                      : completedPageSafe * RUN_TABLE_PAGE_SIZE + 1}
                     –
                     {Math.min(
-                      (completedPage + 1) * RUN_TABLE_PAGE_SIZE,
+                      (completedPageSafe + 1) * RUN_TABLE_PAGE_SIZE,
                       completedRunRows.length,
                     )}{" "}
                     of {completedRunRows.length}
@@ -625,7 +611,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="First page"
-                      disabled={completedPage <= 0}
+                      disabled={completedPageSafe <= 0}
                       onClick={() => setCompletedPage(0)}
                     >
                       <ChevronFirst className="size-4" />
@@ -636,7 +622,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Previous page"
-                      disabled={completedPage <= 0}
+                      disabled={completedPageSafe <= 0}
                       onClick={() =>
                         setCompletedPage((p) => Math.max(0, p - 1))
                       }
@@ -649,7 +635,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Next page"
-                      disabled={completedPage >= completedLastPage}
+                      disabled={completedPageSafe >= completedLastPage}
                       onClick={() =>
                         setCompletedPage((p) =>
                           Math.min(completedLastPage, p + 1),
@@ -664,7 +650,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Last page"
-                      disabled={completedPage >= completedLastPage}
+                      disabled={completedPageSafe >= completedLastPage}
                       onClick={() => setCompletedPage(completedLastPage)}
                     >
                       <ChevronLast className="size-4" />
@@ -755,10 +741,10 @@ export default function DashboardPage() {
                     Showing{" "}
                     {incompleteRunRows.length === 0
                       ? 0
-                      : incompletePage * RUN_TABLE_PAGE_SIZE + 1}
+                      : incompletePageSafe * RUN_TABLE_PAGE_SIZE + 1}
                     –
                     {Math.min(
-                      (incompletePage + 1) * RUN_TABLE_PAGE_SIZE,
+                      (incompletePageSafe + 1) * RUN_TABLE_PAGE_SIZE,
                       incompleteRunRows.length,
                     )}{" "}
                     of {incompleteRunRows.length}
@@ -770,7 +756,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="First page"
-                      disabled={incompletePage <= 0}
+                      disabled={incompletePageSafe <= 0}
                       onClick={() => setIncompletePage(0)}
                     >
                       <ChevronFirst className="size-4" />
@@ -781,7 +767,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Previous page"
-                      disabled={incompletePage <= 0}
+                      disabled={incompletePageSafe <= 0}
                       onClick={() =>
                         setIncompletePage((p) => Math.max(0, p - 1))
                       }
@@ -794,7 +780,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Next page"
-                      disabled={incompletePage >= incompleteLastPage}
+                      disabled={incompletePageSafe >= incompleteLastPage}
                       onClick={() =>
                         setIncompletePage((p) =>
                           Math.min(incompleteLastPage, p + 1),
@@ -809,7 +795,7 @@ export default function DashboardPage() {
                       size="icon"
                       className="size-8"
                       aria-label="Last page"
-                      disabled={incompletePage >= incompleteLastPage}
+                      disabled={incompletePageSafe >= incompleteLastPage}
                       onClick={() => setIncompletePage(incompleteLastPage)}
                     >
                       <ChevronLast className="size-4" />

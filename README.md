@@ -151,7 +151,8 @@ workflow-template/
 │   │   └── login/page.tsx                # Login with role selector
 │   └── (dashboard)/
 │       ├── layout.tsx                    # Sidebar + Topbar + RBAC guard
-│       ├── page.tsx                      # Worklist (default landing)
+│       ├── page.tsx                      # Redirects "/" to "/dashboard"
+│       ├── worklist/page.tsx             # Worklist
 │       ├── [entity]/[id]/page.tsx        # Entity detail (tabbed)
 │       ├── dashboard/page.tsx            # Analytics dashboard
 │       ├── rules/page.tsx                # SOP/Rules browser
@@ -216,7 +217,14 @@ The Supabase CLI **skips** migration files whose names contain `init` (so the ba
 |----------|-------------|
 | `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Your Supabase anonymous/public key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (seed script only — never expose in the browser) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (server-side sync + seed; never expose in browser) |
+| `KOGNITOS_BASE_URL` | Kognitos API base URL |
+| `KOGNITOS_API_KEY` (or `KOGNITOS_PAT`) | Kognitos API auth |
+| `KOGNITOS_ORGANIZATION_ID` | Kognitos organization id |
+| `KOGNITOS_WORKSPACE_ID` | Kognitos workspace id |
+| `KOGNITOS_AUTOMATION_ID` | Kognitos automation id for runs APIs |
+| `NEXT_PUBLIC_KOGNITOS_BASE_URL` (optional) | Kognitos web app origin for "See Run" links |
+| `ANTHROPIC_API_KEY` | Required for chat API route |
 
 ## License
 
