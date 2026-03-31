@@ -46,6 +46,308 @@ function getText(obj: unknown): string {
   return "";
 }
 
+function parseJsonIfString(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const s = value.trim();
+  if (!s || s === "[object Object]") return null;
+  try {
+    return JSON.parse(s);
+  } catch {
+    return value;
+  }
+}
+
+function readStringLike(value: unknown, depth = 0): string | null {
+  if (depth > 3 || value == null) return null;
+  if (typeof value === "string") {
+    const s = value.trim();
+    return s && s !== "[object Object]" ? s : null;
+  }
+  if (typeof value !== "object") return null;
+  const obj = value as Record<string, unknown>;
+  for (const key of [
+    "stringValue",
+    "text",
+    "value",
+    "normalizedValue",
+    "normalized_value",
+    "extractedValue",
+    "extracted_value",
+    "name",
+    "displayName",
+    "display_name",
+    "content",
+  ]) {
+    if (!(key in obj)) continue;
+    const hit = readStringLike(obj[key], depth + 1);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function collectStringValues(value: unknown, out: string[], depth = 0): void {
+  if (depth > 4 || value == null) return;
+  const s = readStringLike(value);
+  if (s) {
+    out.push(s);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectStringValues(item, out, depth + 1);
+    return;
+  }
+  if (typeof value === "object") {
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      collectStringValues(child, out, depth + 1);
+    }
+  }
+}
+
+/** Decode Kognitos typed value shape (`dictionary.entries`, `list.items`, `text`, etc.) to plain JS. */
+function decodeTypedValue(node: unknown, depth = 0): unknown {
+  if (depth > 8 || node == null || typeof node !== "object") return node;
+  const obj = node as Record<string, unknown>;
+
+  if (typeof obj.text === "string") return obj.text;
+  if (typeof obj.stringValue === "string") return obj.stringValue;
+  if (obj.number && typeof obj.number === "object") {
+    const n = obj.number as Record<string, unknown>;
+    if (typeof n.lo === "number") return n.lo;
+  }
+  if (typeof obj.bool === "boolean") return obj.bool;
+
+  if (obj.list && typeof obj.list === "object") {
+    const items = (obj.list as { items?: unknown[] }).items;
+    if (Array.isArray(items)) return items.map((it) => decodeTypedValue(it, depth + 1));
+  }
+
+  if (obj.dictionary && typeof obj.dictionary === "object") {
+    const entries = (obj.dictionary as { entries?: unknown[] }).entries;
+    if (Array.isArray(entries)) {
+      const out: Record<string, unknown> = {};
+      for (const e of entries) {
+        if (!e || typeof e !== "object") continue;
+        const er = e as Record<string, unknown>;
+        const keyObj = er.key as Record<string, unknown> | undefined;
+        const key =
+          (keyObj && (decodeTypedValue(keyObj, depth + 1) as string)) ||
+          "";
+        if (!key) continue;
+        out[key] = decodeTypedValue(er.value, depth + 1);
+      }
+      return out;
+    }
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) out[k] = decodeTypedValue(v, depth + 1);
+  return out;
+}
+
+function findVendorNameField(node: unknown, depth = 0): string | null {
+  if (depth > 8 || node == null) return null;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const hit = findVendorNameField(item, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (typeof node !== "object") return null;
+  const obj = node as Record<string, unknown>;
+
+  const direct = bestString(obj.vendor_name);
+  if (direct && isLikelyVendorName(direct)) return direct;
+
+  const name = bestString(obj.name);
+  if (name && /^vendor[_\s-]?name$/i.test(name)) {
+    const valueCandidates: string[] = [];
+    collectStringValues(obj.values, valueCandidates);
+    collectStringValues(obj.value, valueCandidates);
+    collectStringValues(obj.text, valueCandidates);
+    collectStringValues(obj.normalizedValue, valueCandidates);
+    collectStringValues(obj.extractedValue, valueCandidates);
+    for (const c of valueCandidates) {
+      if (isLikelyVendorName(c)) return c.trim();
+    }
+    const candidate =
+      bestString(obj.value) ??
+      bestString(obj.text) ??
+      bestString(obj.normalizedValue) ??
+      bestString(obj.extractedValue);
+    if (candidate && isLikelyVendorName(candidate)) return candidate;
+  }
+
+  for (const child of Object.values(obj)) {
+    const hit = findVendorNameField(child, depth + 1);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function bestString(v: unknown): string | null {
+  const s = (readStringLike(v) ?? getText(v)).trim();
+  if (!s || s === "[object Object]") return null;
+  return s;
+}
+
+function isLikelyVendorName(value: string): boolean {
+  const s = value.trim();
+  if (!s || s.length > 256) return false;
+  if (/^\d+$/.test(s)) return false; // pure ids/codes
+  if (/^(document|documents|supplier|vendor|plant|invoice|po)$/i.test(s))
+    return false;
+  return true;
+}
+
+/** Deep-search object for vendor/supplier-like keys (document extraction payloads). */
+function findVendorLikeValueDeep(node: unknown): string | null {
+  const targetKey = /(vendor|supplier)/i;
+  const skipKey = /(id|number|code|plant|address|city|zip|postal|email|phone)$/i;
+  const labelKey = /(field|label|name|key|title)$/i;
+  const valueKey = /(value|text|content|normalized|extracted)/i;
+
+  function walk(value: unknown): string | null {
+    if (value == null) return null;
+    if (typeof value === "string") return null;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const hit = walk(item);
+        if (hit) return hit;
+      }
+      return null;
+    }
+    if (typeof value !== "object") return null;
+    const obj = value as Record<string, unknown>;
+
+    // Strong signal: a field/label says vendor/supplier and a sibling contains the value.
+    let hasVendorLabel = false;
+    for (const [k, v] of Object.entries(obj)) {
+      if (!labelKey.test(k)) continue;
+      const label = bestString(v);
+      if (label && /(vendor|supplier)/i.test(label) && !skipKey.test(label)) {
+        hasVendorLabel = true;
+        break;
+      }
+    }
+    if (hasVendorLabel) {
+      for (const [k, v] of Object.entries(obj)) {
+        if (!valueKey.test(k) && !/^(result|output|raw|data)$/i.test(k)) continue;
+        const candidate = bestString(v);
+        if (candidate && isLikelyVendorName(candidate)) return candidate;
+      }
+    }
+
+    // Prefer explicit name-ish keys first.
+    for (const [k, v] of Object.entries(obj)) {
+      if (!targetKey.test(k) || skipKey.test(k)) continue;
+      const direct = bestString(v);
+      if (direct && isLikelyVendorName(direct)) return direct;
+      if (typeof v === "object" && v != null) {
+        const nestedName =
+          bestString((v as Record<string, unknown>).name) ??
+          bestString((v as Record<string, unknown>).value) ??
+          bestString((v as Record<string, unknown>).text);
+        if (nestedName && isLikelyVendorName(nestedName)) return nestedName;
+      }
+    }
+
+    // Fallback: recurse through children.
+    for (const child of Object.values(obj)) {
+      const hit = walk(child);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  return walk(node);
+}
+
+/** Vendor from document processing output (`idp_extraction_results`). */
+function extractVendorFromExtractionOutputs(
+  outputs: Record<string, unknown>,
+): string | null {
+  const raw = parseJsonIfString(outputs.idp_extraction_results);
+  if (raw == null) return null;
+  const decoded = decodeTypedValue(raw);
+
+  const fromDecodedVendorName = findVendorNameField(decoded);
+  if (fromDecodedVendorName) return fromDecodedVendorName;
+
+  // Explicit contract from extraction payload: `vendor_name` holds vendor name.
+  const vendorNameCandidates: string[] = [];
+  (function walk(node: unknown, depth = 0) {
+    if (depth > 5 || node == null) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1);
+      return;
+    }
+    if (typeof node !== "object") return;
+    const obj = node as Record<string, unknown>;
+    for (const [k, v] of Object.entries(obj)) {
+      if (/^vendor[_\s-]?name$/i.test(k)) {
+        collectStringValues(v, vendorNameCandidates);
+      } else {
+        walk(v, depth + 1);
+      }
+    }
+  })(decoded);
+  for (const c of vendorNameCandidates) {
+    if (isLikelyVendorName(c)) return c.trim();
+  }
+
+  return findVendorLikeValueDeep(decoded);
+}
+
+function collectNamedFieldValues(
+  node: unknown,
+  matcher: (name: string) => boolean,
+  out: string[],
+  depth = 0,
+): void {
+  if (depth > 8 || node == null) return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectNamedFieldValues(item, matcher, out, depth + 1);
+    return;
+  }
+  if (typeof node !== "object") return;
+  const obj = node as Record<string, unknown>;
+  const name = bestString(obj.name);
+  if (name && matcher(name)) {
+    collectStringValues(obj.values, out);
+    collectStringValues(obj.value, out);
+    collectStringValues(obj.text, out);
+    collectStringValues(obj.normalizedValue, out);
+    collectStringValues(obj.extractedValue, out);
+  }
+  for (const child of Object.values(obj)) {
+    collectNamedFieldValues(child, matcher, out, depth + 1);
+  }
+}
+
+export function extractExtractionFieldValuesFromRun(
+  run: KognitosRun,
+  fieldNames: string[],
+): string[] {
+  const outputs = run.state?.completed?.outputs;
+  if (!outputs || typeof outputs !== "object") return [];
+  const raw = parseJsonIfString(
+    (outputs as Record<string, unknown>).idp_extraction_results,
+  );
+  if (raw == null) return [];
+  const decoded = decodeTypedValue(raw);
+  const wanted = new Set(fieldNames.map((n) => n.toLowerCase()));
+  const values: string[] = [];
+  collectNamedFieldValues(
+    decoded,
+    (name) => wanted.has(name.trim().toLowerCase()),
+    values,
+  );
+  return values
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0 && v !== "[object Object]");
+}
+
 /**
  * Parse Validation Results table for per-check PASS/FAIL.
  */
@@ -134,7 +436,7 @@ function parseSupplierFromSapTransactionSummary(markdown: string): string | null
       continue;
 
     const val = cells[supplierCol]?.trim() ?? "";
-    if (!val || /^plant$/i.test(val)) continue;
+    if (!val || /^plant$/i.test(val) || /^\d+$/.test(val)) continue;
     counts.set(val, (counts.get(val) ?? 0) + 1);
   }
 
@@ -173,20 +475,26 @@ export function parseVendorNameFromMarkdown(markdown: string): string | null {
 
 /** Vendor/supplier from user inputs or completed markdown outputs. */
 export function extractVendorFromRun(run: KognitosRun): string | null {
+  const outputs = run.state?.completed?.outputs;
+  if (outputs && typeof outputs === "object") {
+    const fromExtraction = extractVendorFromExtractionOutputs(
+      outputs as Record<string, unknown>,
+    );
+    if (fromExtraction) return fromExtraction;
+  }
+
   const ui = run.userInputs;
   if (ui && typeof ui === "object") {
     for (const key of [
       "vendor",
       "vendor_name",
-      "vendor_id",
       "supplier",
       "supplier_name",
     ]) {
       const v = ui[key]?.trim();
-      if (v) return v;
+      if (v && isLikelyVendorName(v)) return v;
     }
   }
-  const outputs = run.state?.completed?.outputs;
   if (outputs && typeof outputs === "object") {
     const md = getText(
       (outputs as Record<string, unknown>).markdown_report,

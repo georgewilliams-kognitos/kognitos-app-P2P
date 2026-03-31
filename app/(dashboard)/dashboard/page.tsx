@@ -5,8 +5,6 @@ import {
   Clock,
   Building2,
   Zap,
-  ArrowUpRight,
-  ArrowDownRight,
   Check,
   X,
   FileCheck,
@@ -34,6 +32,13 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 import { DOMAIN } from "@/lib/domain.config";
 import {
@@ -42,11 +47,16 @@ import {
   type KognitosRunRow,
 } from "@/lib/api";
 import type { KognitosInsights } from "@/lib/types";
-import { aggregateResults, type P2PInsights } from "@/lib/p2p-insights";
+import {
+  aggregateResults,
+  buildRunSummaryFromRun,
+  extractFourWayMatchFromRun,
+} from "@/lib/p2p-insights";
 import {
   averageRunDurationMs,
   formatDurationMs,
-  topVendorFromRuns,
+  topMaterialFromRuns,
+  topVendorStatsFromRuns,
 } from "@/lib/kognitos/dashboard-metrics";
 import {
   formatRunTime,
@@ -71,6 +81,34 @@ const CHART_BAR = {
 } as const;
 
 const RUN_TABLE_PAGE_SIZE = 20;
+type TimePeriod = "last_90_days" | "year_to_date" | "last_year" | "all_time";
+
+function getPeriodStart(period: TimePeriod, now = new Date()): Date | null {
+  const d = new Date(now);
+  if (period === "all_time") return null;
+  if (period === "last_90_days") {
+    d.setDate(d.getDate() - 90);
+    return d;
+  }
+  if (period === "year_to_date") {
+    return new Date(d.getFullYear(), 0, 1);
+  }
+  return new Date(d.getFullYear() - 1, 0, 1);
+}
+
+function inSelectedPeriod(iso: string | undefined, period: TimePeriod): boolean {
+  if (!iso) return false;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return false;
+  const now = new Date();
+  const start = getPeriodStart(period, now);
+  if (start == null) return true;
+  if (period === "last_year") {
+    const end = new Date(now.getFullYear(), 0, 1);
+    return t >= start.getTime() && t < end.getTime();
+  }
+  return t >= start.getTime() && t <= now.getTime();
+}
 
 const currencyFmt = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -105,9 +143,6 @@ function CheckOrCross({ pass }: { pass: boolean | undefined }) {
   );
 }
 
-/** Empty P2P aggregate for display before first sync (matches `aggregateResults([], [])`). */
-const EMPTY_P2P_INSIGHTS: P2PInsights = aggregateResults([], []);
-
 /** KPI row above “Completed checks” — same layout as Vercel-Test home dashboard. */
 function FourWayMatchKpiCard({
   label,
@@ -138,63 +173,14 @@ function FourWayMatchKpiCard({
   );
 }
 
-// ── KPI Card ────────────────────────────────────────────────────
-
-function KpiCard({
-  label,
-  value,
-  icon: Icon,
-  trend,
-  trendDirection,
-  description,
-}: {
-  label: string;
-  value: string;
-  icon: React.ElementType;
-  trend?: string;
-  trendDirection?: "up" | "down";
-  description?: string;
-}) {
-  return (
-    <Card className="gap-4 py-5">
-      <CardContent className="flex items-start justify-between px-5">
-        <div className="min-w-0 flex-1 space-y-1">
-          <p className="text-sm font-medium text-muted-foreground">{label}</p>
-          <p className="text-2xl font-bold tracking-tight break-words">{value}</p>
-          {description && (
-            <p className="text-xs text-muted-foreground">{description}</p>
-          )}
-          {trend && (
-            <div
-              className={`flex items-center gap-1 text-xs font-medium ${
-                trendDirection === "up" ? "text-success" : "text-destructive"
-              }`}
-            >
-              {trendDirection === "up" ? (
-                <ArrowUpRight className="h-3 w-3" />
-              ) : (
-                <ArrowDownRight className="h-3 w-3" />
-              )}
-              {trend}
-            </div>
-          )}
-        </div>
-        <div className="rounded-md bg-primary/10 p-2.5">
-          <Icon className="h-5 w-5 text-primary" />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 // ── Dashboard Page ──────────────────────────────────────────────
 
 export default function DashboardPage() {
   const [insights, setInsights] = useState<KognitosInsights | null>(null);
-  const [p2p, setP2p] = useState<P2PInsights | null>(null);
   const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
   const [completedPage, setCompletedPage] = useState(0);
   const [incompletePage, setIncompletePage] = useState(0);
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>("all_time");
 
   function loadDashboardData() {
     Promise.all([
@@ -205,7 +191,6 @@ export default function DashboardPage() {
       }),
     ]).then(([cache, rows]) => {
       setInsights(cache.insights);
-      setP2p(cache.p2p);
       setRunRows(rows);
     });
   }
@@ -220,45 +205,45 @@ export default function DashboardPage() {
     return () => window.removeEventListener("chat-data-changed", handler);
   }, []);
 
-  const { completedRunRows, incompleteRunRows } = useMemo(() => {
-    const completed = runRows.filter((row) =>
-      isCompletedRun(row.run, p2p),
-    );
-    const incomplete = runRows.filter((row) => !isCompletedRun(row.run, p2p));
-    return { completedRunRows: completed, incompleteRunRows: incomplete };
-  }, [runRows, p2p]);
+  const filteredRunRows = useMemo(
+    () =>
+      runRows.filter((row) => inSelectedPeriod(row.run.createTime, timePeriod)),
+    [runRows, timePeriod],
+  );
 
-  /** Prefer Supabase-synced runs; Kognitos queryInsights totals are often 0 or window-scoped. */
-  const totalRunsDisplay = useMemo(() => {
-    if (runRows.length > 0) return runRows.length;
-    return insights?.runInsight.totalRunsCount ?? 0;
-  }, [runRows.length, insights]);
+  const p2pForWidgets = useMemo(() => {
+    const parsed = filteredRunRows
+      .map((row) => extractFourWayMatchFromRun(row.run))
+      .filter((x): x is NonNullable<typeof x> => x != null);
+    const summaries = filteredRunRows.map((row) => buildRunSummaryFromRun(row.run));
+    return aggregateResults(parsed, summaries);
+  }, [filteredRunRows]);
+
+  const { completedRunRows, incompleteRunRows } = useMemo(() => {
+    const completed = filteredRunRows.filter((row) =>
+      isCompletedRun(row.run, p2pForWidgets),
+    );
+    const incomplete = filteredRunRows.filter((row) =>
+      !isCompletedRun(row.run, p2pForWidgets),
+    );
+    return { completedRunRows: completed, incompleteRunRows: incomplete };
+  }, [filteredRunRows, p2pForWidgets]);
+
+  const totalRunsDisplay = useMemo(
+    () => filteredRunRows.length,
+    [filteredRunRows.length],
+  );
 
   const stpDisplay = useMemo(() => {
-    if (runRows.length > 0) {
-      return Math.round((completedRunRows.length / runRows.length) * 100);
-    }
-    return insights?.completionInsight.stp ?? 0;
-  }, [runRows.length, completedRunRows.length, insights]);
+    if (filteredRunRows.length === 0) return 0;
+    return Math.round((completedRunRows.length / filteredRunRows.length) * 100);
+  }, [filteredRunRows.length, completedRunRows.length]);
 
   const awaitingGuidanceDisplay = useMemo(() => {
-    if (runRows.length > 0) {
-      return runRows.filter(
-        (r) => getRunStateLabel(r.run.state) === "awaitingGuidance",
-      ).length;
-    }
-    return insights?.awaitingGuidanceInsight.totalRunsAwaitingGuidance ?? 0;
-  }, [runRows, insights]);
-
-  const timeSavedMinutes = useMemo(() => {
-    const secs = insights?.valueInsight.totalTimeSavedSecs ?? 0;
-    return Math.round(secs / 60);
-  }, [insights]);
-
-  const p2pForWidgets = useMemo(
-    () => p2p ?? EMPTY_P2P_INSIGHTS,
-    [p2p],
-  );
+    return filteredRunRows.filter(
+      (r) => getRunStateLabel(r.run.state) === "awaitingGuidance",
+    ).length;
+  }, [filteredRunRows]);
 
   const avgRunDurationMs = useMemo(
     () => averageRunDurationMs(completedRunRows.map((r) => r.run)),
@@ -266,8 +251,13 @@ export default function DashboardPage() {
   );
 
   const topVendor = useMemo(
-    () => topVendorFromRuns(runRows.map((r) => r.run)),
-    [runRows],
+    () => topVendorStatsFromRuns(filteredRunRows.map((r) => r.run)),
+    [filteredRunRows],
+  );
+
+  const topMaterial = useMemo(
+    () => topMaterialFromRuns(filteredRunRows.map((r) => r.run)),
+    [filteredRunRows],
   );
 
   const completedLastPage = useMemo(
@@ -316,133 +306,62 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">
-          {DOMAIN.entity.plural} performance overview
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            {DOMAIN.entity.plural} performance overview
+          </p>
+        </div>
+        <div className="w-full sm:w-auto">
+          <Select
+            value={timePeriod}
+            onValueChange={(v) => setTimePeriod(v as TimePeriod)}
+          >
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue placeholder="Select period" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="last_90_days">Last 90 days</SelectItem>
+              <SelectItem value="year_to_date">Year To Date</SelectItem>
+              <SelectItem value="last_year">Last Year</SelectItem>
+              <SelectItem value="all_time">All Time</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <KpiCard
-          label="Average Run Time"
-          value={formatDurationMs(avgRunDurationMs)}
-          icon={Clock}
-        />
-        <KpiCard
-          label="Top Vendor"
-          value={topVendor?.vendor ?? "—"}
-          icon={Building2}
-          description={
-            topVendor && topVendor.count > 1
-              ? `${topVendor.count} runs`
-              : topVendor
-                ? "1 run"
-                : undefined
-          }
-        />
-      </div>
-
-      {/* CUSTOMIZE: Kognitos Metrics Section */}
-      {(insights != null || runRows.length > 0) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-primary" />
-              Kognitos Automation Insights
-            </CardTitle>
-            {runRows.length > 0 && (
-              <p className="text-sm text-muted-foreground">
-                Run count, completion rate, and awaiting guidance reflect synced
-                runs in this app. Other values use the Kognitos dashboard API
-                when available.
-              </p>
-            )}
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Total Runs
-                </p>
-                <p className="text-lg font-bold">{totalRunsDisplay}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {runRows.length > 0 ? "Completion rate" : "STP Rate"}
-                </p>
-                <p className="text-lg font-bold">
-                  {stpDisplay}%
-                </p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Time Saved
-                </p>
-                <p className="text-lg font-bold">
-                  {timeSavedMinutes} min
-                </p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Awaiting Guidance
-                </p>
-                <p className="text-lg font-bold">
-                  {awaitingGuidanceDisplay}
-                </p>
-              </div>
-            </div>
-
-            {/* Completions per period */}
-            {(insights?.completionInsight?.completionsPerPeriod?.length ?? 0) >
-              0 && (
-              <div className="mt-4">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Completions per Period
-                </p>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Period</TableHead>
-                      <TableHead className="text-right">
-                        Auto-Completed
-                      </TableHead>
-                      <TableHead className="text-right">
-                        Manually Resolved
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {insights!.completionInsight.completionsPerPeriod.map(
-                      (p) => (
-                        <TableRow key={p.windowLabel}>
-                          <TableCell>{p.windowLabel}</TableCell>
-                          <TableCell className="text-right">
-                            {p.autoCompletedCount}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {p.manuallyResolvedCount}
-                          </TableCell>
-                        </TableRow>
-                      ),
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       <div className="space-y-4">
         <div className="space-y-2">
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <FourWayMatchKpiCard
-              label="Runs analyzed"
+              label="Invoices Received"
               value={p2pForWidgets.runsAnalyzed.toString()}
-              description="Completed runs with validation data"
               icon={FileCheck}
+              description="Completed invoice data checks"
             />
+            <FourWayMatchKpiCard
+              label="Top Vendor"
+              value={topVendor?.vendor ?? "—"}
+              icon={Building2}
+              description={
+                topVendor
+                  ? `${topVendor.count} invoice${topVendor.count === 1 ? "" : "s"} • ${currencyFmt.format(topVendor.approvedPaymentsTotal)} total`
+                  : undefined
+              }
+            />
+            <FourWayMatchKpiCard
+              label="Top Material"
+              value={topMaterial?.material ?? "—"}
+              icon={FileCheck}
+              description={
+                topMaterial
+                  ? `${topMaterial.totalCount} purchased`
+                  : undefined
+              }
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
             <FourWayMatchKpiCard
               label="Total Approved Payments"
               value={currencyFmt.format(p2pForWidgets.totalApprovedValue)}
@@ -454,6 +373,12 @@ export default function DashboardPage() {
               value={currencyFmt.format(p2pForWidgets.totalRejectedValue)}
               description={`${p2pForWidgets.paymentRejectCount} reject or hold`}
               icon={ThumbsDown}
+            />
+            <FourWayMatchKpiCard
+              label="Total Pending Invoices"
+              value={awaitingGuidanceDisplay.toString()}
+              description="Invoices pending review"
+              icon={Clock}
             />
           </div>
 
@@ -610,7 +535,7 @@ export default function DashboardPage() {
                     <TableBody>
                       {completedPagedRows.map(({ run }) => {
                       const runId = runIdFromName(run.name);
-                      const enriched = p2p?.runs?.find((r) => r.runId === runId);
+                      const enriched = p2pForWidgets.runs?.find((r) => r.runId === runId);
                       const state = getRunStateLabel(run.state);
                       const completedTimeStr =
                         state === "completed"
@@ -896,6 +821,53 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Kognitos Automation Insights (moved to bottom) */}
+      {(insights != null || filteredRunRows.length > 0) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Zap className="h-5 w-5 text-primary" />
+              Kognitos Automation Insights
+            </CardTitle>
+            {filteredRunRows.length > 0 && (
+              <p className="text-sm text-muted-foreground">
+                Values in this card reflect the selected time window.
+              </p>
+            )}
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="space-y-1">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Total Runs
+                </p>
+                <p className="text-lg font-bold">{totalRunsDisplay}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Completion rate
+                </p>
+                <p className="text-lg font-bold">{stpDisplay}%</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Average Run Time
+                </p>
+                <p className="text-lg font-bold">
+                  {formatDurationMs(avgRunDurationMs)}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Awaiting Guidance
+                </p>
+                <p className="text-lg font-bold">{awaitingGuidanceDisplay}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
     </div>
   );
