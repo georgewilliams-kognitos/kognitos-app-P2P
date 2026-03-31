@@ -367,7 +367,7 @@ export default function DashboardPage() {
               }
             />
           </div>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <FourWayMatchKpiCard
               label="Total Approved Payments"
               value={currencyFmt.format(p2pForWidgets.totalApprovedValue)}
