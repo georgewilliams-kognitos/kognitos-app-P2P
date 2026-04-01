@@ -15,6 +15,7 @@ import {
   ChevronLast,
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
 } from "lucide-react";
 import {
   Card,
@@ -42,6 +43,7 @@ import {
 } from "@/components/ui/select";
 
 import { DOMAIN } from "@/lib/domain.config";
+import { useAuth } from "@/lib/auth-context";
 import {
   getKognitosInsightsCacheFromDb,
   listKognitosRunRowsFromDb,
@@ -49,6 +51,11 @@ import {
   findVendorForMaterialName,
   type KognitosRunRow,
 } from "@/lib/api";
+import { buildP2pTriageAlerts, type TriageAlert } from "@/lib/p2p-triage";
+import {
+  getReadOverrides,
+  setReadOverride,
+} from "@/lib/notification-state";
 import type { KognitosInsights } from "@/lib/types";
 import {
   aggregateResults,
@@ -194,11 +201,15 @@ function FourWayMatchKpiCard({
 // ── Dashboard Page ──────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const { user } = useAuth();
   const [insights, setInsights] = useState<KognitosInsights | null>(null);
   const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
   const [completedPage, setCompletedPage] = useState(0);
   const [incompletePage, setIncompletePage] = useState(0);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("all_time");
+  const [triageAlerts, setTriageAlerts] = useState<
+    Array<TriageAlert & { vendorHref: string; is_read: boolean }>
+  >([]);
 
   function loadDashboardData() {
     Promise.all([
@@ -335,13 +346,17 @@ export default function DashboardPage() {
 
   const validationHealth = useMemo(() => {
     const checks = [
-      { key: "documentMatch" as const, label: "Document Match" },
-      { key: "quantityAndUnitMatch" as const, label: "Quantity and Unit Match" },
-      { key: "valueMatch" as const, label: "Value Match" },
-      { key: "coaValidation" as const, label: "COA Validation" },
+      { key: "documentMatch" as const, label: "1 - Document Match", order: 1 },
+      {
+        key: "quantityAndUnitMatch" as const,
+        label: "2 - Quantity and Unit Match",
+        order: 2,
+      },
+      { key: "valueMatch" as const, label: "3 - Value Match", order: 3 },
+      { key: "coaValidation" as const, label: "4 - COA Validation", order: 4 },
     ];
 
-    const byCheck = checks.map(({ key, label }) => {
+    const byCheck = checks.map(({ key, label, order }) => {
       let pass = 0;
       let fail = 0;
       for (const run of p2pForWidgets.runs) {
@@ -352,6 +367,7 @@ export default function DashboardPage() {
       const total = pass + fail;
       return {
         key,
+        order,
         label,
         pass,
         fail,
@@ -372,9 +388,63 @@ export default function DashboardPage() {
       overallPass: p2pForWidgets.validationPass,
       overallFail: p2pForWidgets.validationFail,
       totalFailedChecks,
-      byCheck: byCheck.sort((a, b) => b.fail - a.fail),
+      byCheck: byCheck.sort((a, b) => a.order - b.order),
     };
   }, [p2pForWidgets]);
+
+  const unreadTriageByVendor = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        vendorName: string;
+        vendorHref: string;
+        alerts: Array<TriageAlert & { vendorHref: string; is_read: boolean }>;
+      }
+    >();
+    for (const alert of triageAlerts) {
+      if (alert.is_read) continue;
+      const key = `${alert.vendorName}::${alert.vendorHref}`;
+      const group = groups.get(key);
+      if (group) {
+        group.alerts.push(alert);
+      } else {
+        groups.set(key, {
+          vendorName: alert.vendorName,
+          vendorHref: alert.vendorHref,
+          alerts: [alert],
+        });
+      }
+    }
+    return [...groups.values()];
+  }, [triageAlerts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadTriage = async () => {
+      if (!user) return;
+      const alerts = buildP2pTriageAlerts(filteredRunRows, 3);
+      const overrides = getReadOverrides();
+      const withLinks = await Promise.all(
+        alerts.map(async (a) => {
+          try {
+            const hit = await findVendorByDisplayName(a.vendorName);
+            return {
+              ...a,
+              vendorHref: hit ? `/vendors/${hit.vendor_id}` : "/vendors",
+              is_read: overrides[a.id] ?? false,
+            };
+          } catch {
+            return { ...a, vendorHref: "/vendors", is_read: overrides[a.id] ?? false };
+          }
+        }),
+      );
+      if (!cancelled) setTriageAlerts(withLinks);
+    };
+    loadTriage();
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredRunRows, user]);
 
   const completedLastPage = useMemo(
     () =>
@@ -449,6 +519,59 @@ export default function DashboardPage() {
 
       <div className="space-y-4">
         <div className="space-y-2">
+          {unreadTriageByVendor.length > 0 && (
+            <Card className="border-l-4 border-l-red-500 bg-red-100/70 dark:bg-red-950/30">
+              <CardHeader className="space-y-0 pb-0 pt-0">
+                <CardTitle className="text-base leading-none">Action Items</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0">
+                {unreadTriageByVendor.map((vendorGroup) => (
+                  <div
+                    key={`${vendorGroup.vendorName}-${vendorGroup.vendorHref}`}
+                    className="rounded-lg border border-border/70 bg-card px-3 py-2"
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold">{vendorGroup.vendorName}</p>
+                      <Link
+                        href={vendorGroup.vendorHref}
+                        className="inline-flex items-center gap-1 text-sm font-medium text-red-500 hover:underline"
+                      >
+                        See Vendor
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    </div>
+                    <div className="space-y-1">
+                      {vendorGroup.alerts.map((alert) => (
+                        <p key={alert.id} className="text-sm text-muted-foreground">
+                          {alert.checkLabel} Failed - Invoice {alert.invoiceNumber} -{" "}
+                          {alert.recommendation}
+                        </p>
+                      ))}
+                    </div>
+                    <div
+                      className="mt-2 flex items-center gap-3"
+                    >
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const ids = new Set(vendorGroup.alerts.map((a) => a.id));
+                          vendorGroup.alerts.forEach((a) => setReadOverride(a.id, true));
+                          setTriageAlerts((prev) =>
+                            prev.map((n) =>
+                              ids.has(n.id) ? { ...n, is_read: true } : n,
+                            ),
+                          );
+                        }}
+                      >
+                        Mark as Read
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <FourWayMatchKpiCard
               label="Invoices Received"
@@ -614,8 +737,8 @@ export default function DashboardPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>PO Number</TableHead>
                         <TableHead>Invoice Number</TableHead>
+                        <TableHead>PO Number</TableHead>
                         <TableHead>Goods Receipt</TableHead>
                         <TableHead
                           className="w-10 text-center"
@@ -666,8 +789,8 @@ export default function DashboardPage() {
                       const href = kognitosRunOpenHref(run.name);
                       return (
                         <TableRow key={run.name}>
-                          <TableCell>{enriched?.poNumber ?? "—"}</TableCell>
                           <TableCell>{enriched?.invoiceNumber ?? "—"}</TableCell>
+                          <TableCell>{enriched?.poNumber ?? "—"}</TableCell>
                           <TableCell>
                             {enriched?.goodsReceiptNumber ?? "—"}
                           </TableCell>

@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Bell, LogOut, RefreshCw, Search, User as UserIcon } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { DOMAIN, getRoleConfig } from "@/lib/domain.config";
+import { listVendors } from "@/lib/api";
+import type { Vendor } from "@/lib/types";
 import { queryUnreadNotificationCount } from "@/lib/queries";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -38,15 +40,15 @@ function getInitials(name: string) {
 export function Topbar() {
   const { user, logout } = useAuth();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [searchValue, setSearchValue] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
   const [syncingKognitos, setSyncingKognitos] = useState(false);
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [showVendorDropdown, setShowVendorDropdown] = useState(false);
 
   useEffect(() => {
-    const q = searchParams.get("search");
-    setSearchValue(q ?? "");
-  }, [searchParams]);
+    listVendors().then(setVendors).catch(console.error);
+  }, []);
 
   useEffect(() => {
     if (user) {
@@ -61,11 +63,22 @@ export function Topbar() {
 
   function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") {
-      router.push(
-        `/worklist?search=${encodeURIComponent(searchValue)}`,
-      );
+      const q = searchValue.trim().toLowerCase();
+      const hit = vendors.find((v) => v.company_name.toLowerCase().includes(q));
+      if (hit) {
+        setShowVendorDropdown(false);
+        router.push(`/vendors/${hit.vendor_id}`);
+      } else {
+        router.push("/vendors");
+      }
     }
   }
+
+  const filteredVendors = vendors
+    .filter((v) =>
+      v.company_name.toLowerCase().includes(searchValue.trim().toLowerCase()),
+    )
+    .slice(0, 8);
 
   const roleConfig = user ? getRoleConfig(user.role) : undefined;
 
@@ -115,12 +128,39 @@ export function Topbar() {
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder={`Search ${DOMAIN.entity.plural.toLowerCase()}…`}
+              placeholder="Search vendors..."
               className="w-full pl-9 h-9"
               value={searchValue}
               onChange={(e) => setSearchValue(e.target.value)}
               onKeyDown={handleSearchKeyDown}
+              onFocus={() => setShowVendorDropdown(true)}
+              onBlur={() => setTimeout(() => setShowVendorDropdown(false), 120)}
             />
+            {showVendorDropdown && searchValue.trim().length > 0 && (
+              <div className="absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
+                {filteredVendors.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                    No vendors found
+                  </div>
+                ) : (
+                  filteredVendors.map((vendor) => (
+                    <button
+                      key={vendor.vendor_id}
+                      type="button"
+                      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-muted"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setSearchValue(vendor.company_name);
+                        setShowVendorDropdown(false);
+                        router.push(`/vendors/${vendor.vendor_id}`);
+                      }}
+                    >
+                      {vendor.company_name}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         </div>
 
