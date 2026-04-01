@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Clock,
   Building2,
@@ -44,6 +45,8 @@ import { DOMAIN } from "@/lib/domain.config";
 import {
   getKognitosInsightsCacheFromDb,
   listKognitosRunRowsFromDb,
+  findVendorByDisplayName,
+  findVendorForMaterialName,
   type KognitosRunRow,
 } from "@/lib/api";
 import type { KognitosInsights } from "@/lib/types";
@@ -75,7 +78,7 @@ const CHART_BAR = {
   // 1) rgb(207,219,76)  2) rgb(195,208,65)  3) rgb(183,196,53)
   // 4) rgb(124,137,1)   5) rgb(99,109,2)
   track:
-    "rounded-full border border-[#b7c435] bg-[#b7c435]/35 dark:bg-muted/50",
+    "rounded-full border border-border/70 bg-muted/45 dark:bg-muted/50",
   // 1st shade
   pass: "bg-[#cfdb4c]",
   // 3rd shade
@@ -155,26 +158,35 @@ function FourWayMatchKpiCard({
   value,
   description,
   icon: Icon,
+  href,
 }: {
   label: string;
   value: string;
   description?: string;
   icon: React.ElementType;
+  href?: string;
 }) {
+  const content = (
+    <CardContent className="flex items-start justify-between px-5">
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-muted-foreground">{label}</p>
+        <p className="text-2xl font-bold tracking-tight">{value}</p>
+        {description && <p className="text-xs text-muted-foreground">{description}</p>}
+      </div>
+      <div className="rounded-md bg-primary/10 p-2.5">
+        <Icon className="h-5 w-5 text-primary" />
+      </div>
+    </CardContent>
+  );
+  if (!href) return <Card className="gap-4 rounded-xl py-5">{content}</Card>;
   return (
-    <Card className="gap-4 rounded-xl py-5">
-      <CardContent className="flex items-start justify-between px-5">
-        <div className="space-y-1">
-          <p className="text-sm font-medium text-muted-foreground">{label}</p>
-          <p className="text-2xl font-bold tracking-tight">{value}</p>
-          {description && (
-            <p className="text-xs text-muted-foreground">{description}</p>
-          )}
-        </div>
-        <div className="rounded-md bg-primary/10 p-2.5">
-          <Icon className="h-5 w-5 text-primary" />
-        </div>
-      </CardContent>
+    <Card className="gap-4 rounded-xl py-5 transition-all duration-200 hover:-translate-y-0.5 hover:bg-muted/30 hover:shadow-md">
+      <Link
+        href={href}
+        className="block cursor-pointer rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+      >
+        {content}
+      </Link>
     </Card>
   );
 }
@@ -265,6 +277,104 @@ export default function DashboardPage() {
     () => topMaterialFromRuns(filteredRunRows.map((r) => r.run)),
     [filteredRunRows],
   );
+  const [topVendorHref, setTopVendorHref] = useState<string | undefined>(
+    undefined,
+  );
+  const [topMaterialHref, setTopMaterialHref] = useState<string | undefined>(
+    undefined,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolveTopVendorHref = async () => {
+      if (!topVendor?.vendor) {
+        if (!cancelled) setTopVendorHref(undefined);
+        return;
+      }
+      try {
+        const hit = await findVendorByDisplayName(topVendor.vendor);
+        if (!cancelled) {
+          setTopVendorHref(hit ? `/vendors/${hit.vendor_id}` : "/vendors");
+        }
+      } catch {
+        if (!cancelled) setTopVendorHref("/vendors");
+      }
+    };
+    resolveTopVendorHref();
+    return () => {
+      cancelled = true;
+    };
+  }, [topVendor?.vendor]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolveTopMaterialHref = async () => {
+      if (!topMaterial?.material) {
+        if (!cancelled) setTopMaterialHref(undefined);
+        return;
+      }
+      try {
+        const hit = await findVendorForMaterialName(topMaterial.material);
+        if (!cancelled) {
+          if (!hit) {
+            setTopMaterialHref("/vendors");
+            return;
+          }
+          const queryMaterial = encodeURIComponent(topMaterial.material);
+          setTopMaterialHref(`/vendors/${hit.vendor.vendor_id}?material=${queryMaterial}`);
+        }
+      } catch {
+        if (!cancelled) setTopMaterialHref("/vendors");
+      }
+    };
+    resolveTopMaterialHref();
+    return () => {
+      cancelled = true;
+    };
+  }, [topMaterial?.material]);
+
+  const validationHealth = useMemo(() => {
+    const checks = [
+      { key: "documentMatch" as const, label: "Document Match" },
+      { key: "quantityAndUnitMatch" as const, label: "Quantity and Unit Match" },
+      { key: "valueMatch" as const, label: "Value Match" },
+      { key: "coaValidation" as const, label: "COA Validation" },
+    ];
+
+    const byCheck = checks.map(({ key, label }) => {
+      let pass = 0;
+      let fail = 0;
+      for (const run of p2pForWidgets.runs) {
+        const status = run[key];
+        if (status === "PASS") pass += 1;
+        else if (status === "FAIL") fail += 1;
+      }
+      const total = pass + fail;
+      return {
+        key,
+        label,
+        pass,
+        fail,
+        total,
+        passRate: total > 0 ? Math.round((100 * pass) / total) : 0,
+      };
+    });
+
+    const totalFailedChecks = byCheck.reduce((sum, c) => sum + c.fail, 0);
+    const overallTotal = p2pForWidgets.validationPass + p2pForWidgets.validationFail;
+    const overallPassRate =
+      overallTotal > 0
+        ? Math.round((100 * p2pForWidgets.validationPass) / overallTotal)
+        : 0;
+
+    return {
+      overallPassRate,
+      overallPass: p2pForWidgets.validationPass,
+      overallFail: p2pForWidgets.validationFail,
+      totalFailedChecks,
+      byCheck: byCheck.sort((a, b) => b.fail - a.fail),
+    };
+  }, [p2pForWidgets]);
 
   const completedLastPage = useMemo(
     () =>
@@ -350,6 +460,7 @@ export default function DashboardPage() {
               label="Top Vendor"
               value={topVendor?.vendor ?? "—"}
               icon={Building2}
+              href={topVendorHref}
               description={
                 topVendor
                   ? `${topVendor.count} invoice${topVendor.count === 1 ? "" : "s"} • ${currencyFmt.format(topVendor.approvedPaymentsTotal)} total`
@@ -360,6 +471,7 @@ export default function DashboardPage() {
               label="Top Material"
               value={topMaterial?.material ?? "—"}
               icon={FileCheck}
+              href={topMaterialHref}
               description={
                 topMaterial
                   ? `${topMaterial.totalCount} purchased`
@@ -390,94 +502,95 @@ export default function DashboardPage() {
 
           <Card className="rounded-xl">
             <CardHeader>
-              <CardTitle>Validations</CardTitle>
+              <CardTitle>Validation Health</CardTitle>
               <CardDescription>
-                4-way match PASS vs FAIL across runs
+                Success rate and failure impact by validation check in one view
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              {(() => {
-                const pass = p2pForWidgets.validationPass;
-                const fail = p2pForWidgets.validationFail;
-                const total = pass + fail;
-                const passPct = total > 0 ? (100 * pass) / total : 0;
-                const failPct = total > 0 ? (100 * fail) / total : 0;
-                return (
-                  <div className="space-y-2">
-                    <div
-                      className={`flex h-7 w-full overflow-hidden p-0.5 ${CHART_BAR.track}`}
-                    >
-                      <div
-                        className={`h-full min-w-0 transition-[width] duration-300 ease-out ${CHART_BAR.pass} ${
-                          passPct <= 0
-                            ? "hidden"
-                            : failPct <= 0
-                              ? "rounded-full"
-                              : "rounded-l-full"
-                        }`}
-                        style={{ width: `${passPct}%` }}
-                      />
-                      <div
-                        className={`h-full min-w-0 transition-[width] duration-300 ease-out ${CHART_BAR.fail} ${
-                          failPct <= 0
-                            ? "hidden"
-                            : passPct <= 0
-                              ? "rounded-full"
-                              : "rounded-r-full"
-                        }`}
-                        style={{ width: `${failPct}%` }}
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {pass} passed · {fail} failed
-                    </p>
+            <CardContent className="space-y-3">
+              <div className="space-y-2 rounded-lg border border-border/70 bg-muted/20 p-2.5">
+                <div className={`flex h-7 w-full overflow-hidden p-0.5 ${CHART_BAR.track}`}>
+                  <div
+                    className={`grid min-w-0 place-items-center text-[11px] font-semibold text-[#374200] transition-[width] duration-300 ease-out ${CHART_BAR.pass} ${
+                      validationHealth.overallPass <= 0
+                        ? "hidden"
+                        : validationHealth.overallFail <= 0
+                          ? "rounded-full"
+                          : "rounded-l-full"
+                    }`}
+                    style={{
+                      width: `${Math.max(0, Math.min(100, validationHealth.overallPassRate))}%`,
+                    }}
+                  >
+                    {validationHealth.overallPass > 0
+                      ? `${validationHealth.overallPass} pass`
+                      : ""}
                   </div>
-                );
-              })()}
-            </CardContent>
-          </Card>
+                  <div
+                    className={`grid min-w-0 place-items-center text-[11px] font-semibold text-[#3f4600] transition-[width] duration-300 ease-out ${CHART_BAR.fail} ${
+                      validationHealth.overallFail <= 0
+                        ? "hidden"
+                        : validationHealth.overallPass <= 0
+                          ? "rounded-full"
+                          : "rounded-r-full"
+                    }`}
+                    style={{
+                      width: `${Math.max(0, Math.min(100, 100 - validationHealth.overallPassRate))}%`,
+                    }}
+                  >
+                    {validationHealth.overallFail > 0
+                      ? `${validationHealth.overallFail} fail`
+                      : ""}
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {validationHealth.overallPassRate}% pass rate •{" "}
+                  {validationHealth.totalFailedChecks} failed checks across all
+                  validations
+                </p>
+              </div>
 
-          <Card className="rounded-xl">
-            <CardHeader>
-              <CardTitle>Validation check pass rates</CardTitle>
-              <CardDescription>
-                Pass percentage per check type
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {(
-                [
-                  { key: "documentMatch" as const, label: "1 - Document Match" },
-                  {
-                    key: "quantityAndUnitMatch" as const,
-                    label: "2 - Quantity and Unit Match",
-                  },
-                  { key: "valueMatch" as const, label: "3 - Value Match" },
-                  { key: "coaValidation" as const, label: "4 - COA Validation" },
-                ] as const
-              ).map(({ key, label }) => {
-                const pct = p2pForWidgets.checkPercentages[key] ?? 0;
-                return (
-                  <div key={key} className="flex items-center gap-4">
-                    <span className="w-[14rem] shrink-0 text-sm font-medium">
-                      {label}
-                    </span>
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <div
-                        className={`h-5 min-w-0 flex-1 overflow-hidden p-px ${CHART_BAR.track}`}
-                      >
+              <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                {validationHealth.byCheck.map((check) => {
+                  const failImpact =
+                    validationHealth.totalFailedChecks > 0
+                      ? Math.round(
+                          (100 * check.fail) / validationHealth.totalFailedChecks,
+                        )
+                      : 0;
+                  return (
+                    <div
+                      key={check.key}
+                      className="rounded-lg border border-border/70 bg-card px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium">{check.label}</p>
+                        <Badge
+                          variant="secondary"
+                          className="bg-[#c3d041]/35 text-foreground"
+                        >
+                          {check.passRate}% pass
+                        </Badge>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                        <span>
+                          {check.fail} failure{check.fail === 1 ? "" : "s"} ({failImpact}%
+                          impact)
+                        </span>
+                        <span>
+                          {check.pass}/{check.total} passed
+                        </span>
+                      </div>
+                      <div className={`mt-2 h-2 overflow-hidden p-px ${CHART_BAR.track}`}>
                         <div
-                          className={`h-full rounded-full ${CHART_BAR.passRow} transition-[width] duration-300 ease-out`}
-                          style={{ width: `${pct}%` }}
+                          className={`h-full rounded-full ${CHART_BAR.fail}`}
+                          style={{ width: `${failImpact}%` }}
                         />
                       </div>
-                      <span className="w-10 text-right text-sm tabular-nums text-muted-foreground">
-                        {pct}%
-                      </span>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </CardContent>
           </Card>
         </div>

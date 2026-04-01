@@ -131,6 +131,58 @@ export interface Rule {
   stp_rate?: number | null;
 }
 
+/** Vendor master data used for AP and logistics views. */
+export interface Vendor {
+  vendor_id: string;
+  company_name: string;
+  vendor_type: string | null;
+  qualification_status: string | null;
+  primary_contact_name: string | null;
+  primary_contact_email: string | null;
+  primary_contact_phone: string | null;
+  city: string | null;
+  state_province: string | null;
+  country: string | null;
+  region: string | null;
+  contract_end_date: string | null;
+  annual_spend_usd: number | null;
+  payment_terms_days: number | null;
+  currency: string | null;
+  incoterms: string | null;
+  preferred_vendor: boolean | null;
+  vendor_risk_rating: string | null;
+  updated_at: string | null;
+}
+
+/** Product/material catalog row scoped to a vendor. */
+export interface VendorProduct {
+  product_id: string;
+  vendor_id: string;
+  product_name: string;
+  catalog_number: string | null;
+  cas_number: string | null;
+  product_type: string | null;
+  product_category: string | null;
+  unit_of_measure: string | null;
+  minimum_order_quantity: number | null;
+  price_per_unit_usd: number | null;
+  last_purchased_price: number | null;
+  last_purchased_date: string | null;
+  lead_time_days: number | null;
+  availability_status: string | null;
+  shipping_class: string | null;
+  temperature_requirement: string | null;
+  packaging_options: string | null;
+  ships_from_country: string | null;
+  gmp_manufactured: boolean | null;
+  coa_available: boolean | null;
+  msds_available: boolean | null;
+  dmf_number: string | null;
+  cep_number: string | null;
+  notes: string | null;
+  updated_at: string | null;
+}
+
 // ── Kognitos Integration Types ─────────────────────────────────
 // These stay the same across domains — they map to the Kognitos API.
 

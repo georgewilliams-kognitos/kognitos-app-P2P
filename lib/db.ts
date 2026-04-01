@@ -14,6 +14,8 @@ import type {
   AuditEvent,
   Notification,
   Rule,
+  Vendor,
+  VendorProduct,
   KognitosRun,
   KognitosInsights,
 } from "./types";
@@ -73,6 +75,37 @@ export async function getAllRules(): Promise<Rule[]> {
   return data as Rule[];
 }
 
+export async function getAllVendors(): Promise<Vendor[]> {
+  const { data, error } = await sb()
+    .from("vendors")
+    .select(
+      [
+        "vendor_id",
+        "company_name",
+        "vendor_type",
+        "qualification_status",
+        "primary_contact_name",
+        "primary_contact_email",
+        "primary_contact_phone",
+        "city",
+        "state_province",
+        "country",
+        "region",
+        "contract_end_date",
+        "annual_spend_usd",
+        "payment_terms_days",
+        "currency",
+        "incoterms",
+        "preferred_vendor",
+        "vendor_risk_rating",
+        "updated_at",
+      ].join(","),
+    )
+    .order("company_name", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as Vendor[];
+}
+
 // ── Single-record fetchers ─────────────────────────────────────
 // CUSTOMIZE: Rename "requests" to your entity table name.
 
@@ -104,6 +137,38 @@ export async function getRuleById(id: string): Promise<Rule | undefined> {
     .single();
   if (error) return undefined;
   return data as Rule;
+}
+
+export async function getVendorById(id: string): Promise<Vendor | undefined> {
+  const { data, error } = await sb()
+    .from("vendors")
+    .select(
+      [
+        "vendor_id",
+        "company_name",
+        "vendor_type",
+        "qualification_status",
+        "primary_contact_name",
+        "primary_contact_email",
+        "primary_contact_phone",
+        "city",
+        "state_province",
+        "country",
+        "region",
+        "contract_end_date",
+        "annual_spend_usd",
+        "payment_terms_days",
+        "currency",
+        "incoterms",
+        "preferred_vendor",
+        "vendor_risk_rating",
+        "updated_at",
+      ].join(","),
+    )
+    .eq("vendor_id", id)
+    .single();
+  if (error) return undefined;
+  return data as Vendor;
 }
 
 // ── Relational fetchers ────────────────────────────────────────
@@ -143,6 +208,135 @@ export async function getNotificationsForUser(userId: string): Promise<Notificat
     .eq("user_id", userId);
   if (error) throw error;
   return data as Notification[];
+}
+
+export async function getProductsForVendor(
+  vendorId: string,
+): Promise<VendorProduct[]> {
+  const { data, error } = await sb()
+    .from("vendor_products")
+    .select(
+      [
+        "product_id",
+        "vendor_id",
+        "product_name",
+        "catalog_number",
+        "cas_number",
+        "product_type",
+        "product_category",
+        "unit_of_measure",
+        "minimum_order_quantity",
+        "price_per_unit_usd",
+        "last_purchased_price",
+        "last_purchased_date",
+        "lead_time_days",
+        "availability_status",
+        "shipping_class",
+        "temperature_requirement",
+        "packaging_options",
+        "ships_from_country",
+        "gmp_manufactured",
+        "coa_available",
+        "msds_available",
+        "dmf_number",
+        "cep_number",
+        "notes",
+        "updated_at",
+      ].join(","),
+    )
+    .eq("vendor_id", vendorId)
+    .order("product_name", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as VendorProduct[];
+}
+
+function normalizeLooseText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/^invoice\s+/, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+export async function findVendorByDisplayName(
+  displayName: string,
+): Promise<Vendor | null> {
+  const normalized = normalizeLooseText(displayName);
+  if (!normalized) return null;
+
+  const vendors = await getAllVendors();
+  const exact = vendors.find(
+    (v) => normalizeLooseText(v.company_name) === normalized,
+  );
+  if (exact) return exact;
+
+  const fuzzy = vendors.find((v) => {
+    const candidate = normalizeLooseText(v.company_name);
+    return candidate.includes(normalized) || normalized.includes(candidate);
+  });
+
+  return fuzzy ?? null;
+}
+
+export async function findVendorForMaterialName(
+  materialName: string,
+): Promise<{ vendor: Vendor; product: VendorProduct } | null> {
+  const normalized = normalizeLooseText(materialName);
+  if (!normalized) return null;
+
+  const { data, error } = await sb()
+    .from("vendor_products")
+    .select(
+      [
+        "product_id",
+        "vendor_id",
+        "product_name",
+        "catalog_number",
+        "cas_number",
+        "product_type",
+        "product_category",
+        "unit_of_measure",
+        "minimum_order_quantity",
+        "price_per_unit_usd",
+        "last_purchased_price",
+        "last_purchased_date",
+        "lead_time_days",
+        "availability_status",
+        "shipping_class",
+        "temperature_requirement",
+        "packaging_options",
+        "ships_from_country",
+        "gmp_manufactured",
+        "coa_available",
+        "msds_available",
+        "dmf_number",
+        "cep_number",
+        "notes",
+        "updated_at",
+      ].join(","),
+    )
+    .order("updated_at", { ascending: false })
+    .limit(500);
+  if (error) throw error;
+
+  const products = (data ?? []) as VendorProduct[];
+  const product =
+    products.find((p) => normalizeLooseText(p.product_name) === normalized) ??
+    products.find((p) => {
+      const productNorm = normalizeLooseText(p.product_name);
+      const catalogNorm = normalizeLooseText(p.catalog_number ?? "");
+      return (
+        productNorm.includes(normalized) ||
+        normalized.includes(productNorm) ||
+        (catalogNorm.length > 0 &&
+          (catalogNorm.includes(normalized) || normalized.includes(catalogNorm)))
+      );
+    });
+
+  if (!product) return null;
+  const vendor = await getVendorById(product.vendor_id);
+  if (!vendor) return null;
+  return { vendor, product };
 }
 
 // ── Write functions ────────────────────────────────────────────

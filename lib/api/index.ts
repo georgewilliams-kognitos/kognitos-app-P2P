@@ -28,6 +28,14 @@ export {
 } from "./notifications";
 
 export {
+  listVendors,
+  getVendorById,
+  getProductsForVendor,
+  findVendorByDisplayName,
+  findVendorForMaterialName,
+} from "./vendors";
+
+export {
   getKognitosRunFromDb,
   getKognitosInsightsCacheFromDb,
   listKognitosRunRowsFromDb,
