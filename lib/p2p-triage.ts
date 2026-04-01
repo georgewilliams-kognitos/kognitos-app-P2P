@@ -107,7 +107,6 @@ export function buildP2pTriageAlerts(rows: KognitosRunRow[], max = 3): TriageAle
         invoiceNumber,
         vendorName,
         materialName,
-        quantityText,
         totalInvoiceValueText,
         recommendation: cfg.recommendation,
         message: `${cfg.label} issue: Invoice ${invoiceNumber} from ${vendorName} for ${materialName} (qty ${quantityText}, value ${totalInvoiceValueText}). ${cfg.recommendation}`,

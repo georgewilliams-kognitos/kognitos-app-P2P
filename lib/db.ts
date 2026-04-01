@@ -103,7 +103,7 @@ export async function getAllVendors(): Promise<Vendor[]> {
     )
     .order("company_name", { ascending: true });
   if (error) throw error;
-  return (data ?? []) as Vendor[];
+  return (data ?? []) as unknown as Vendor[];
 }
 
 // ── Single-record fetchers ─────────────────────────────────────
@@ -168,7 +168,7 @@ export async function getVendorById(id: string): Promise<Vendor | undefined> {
     .eq("vendor_id", id)
     .single();
   if (error) return undefined;
-  return data as Vendor;
+  return data as unknown as Vendor;
 }
 
 // ── Relational fetchers ────────────────────────────────────────
@@ -247,7 +247,7 @@ export async function getProductsForVendor(
     .eq("vendor_id", vendorId)
     .order("product_name", { ascending: true });
   if (error) throw error;
-  return (data ?? []) as VendorProduct[];
+  return (data ?? []) as unknown as VendorProduct[];
 }
 
 function normalizeLooseText(value: string) {
@@ -319,7 +319,7 @@ export async function findVendorForMaterialName(
     .limit(500);
   if (error) throw error;
 
-  const products = (data ?? []) as VendorProduct[];
+  const products = (data ?? []) as unknown as VendorProduct[];
   const product =
     products.find((p) => normalizeLooseText(p.product_name) === normalized) ??
     products.find((p) => {
