@@ -436,7 +436,7 @@ export default function DashboardPage() {
     let cancelled = false;
     const loadTriage = async () => {
       if (!user) return;
-      const alerts = buildP2pTriageAlerts(filteredRunRows, 3);
+      const alerts = buildP2pTriageAlerts(filteredRunRows);
       const overrides = getReadOverrides();
       const withLinks = await Promise.all(
         alerts.map(async (a) => {

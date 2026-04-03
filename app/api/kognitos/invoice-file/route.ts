@@ -63,20 +63,22 @@ export async function GET(req: Request) {
   try {
     const upstream = await downloadOrganizationFile(fileId);
     const headers = new Headers();
-    const ct = upstream.headers.get("content-type");
-    if (ct) headers.set("content-type", ct);
-    else headers.set("content-type", "application/octet-stream");
-
-    const upstreamCd = upstream.headers.get("content-disposition");
-    if (upstreamCd) {
-      headers.set("content-disposition", upstreamCd);
-    } else {
-      const mode = disposition === "attachment" ? "attachment" : "inline";
-      headers.set(
-        "content-disposition",
-        `${mode}; filename="${safeName}"`,
-      );
+    let contentType = upstream.headers.get("content-type")?.trim() || "";
+    if (
+      (!contentType || contentType === "application/octet-stream") &&
+      /\.pdf$/i.test(safeName)
+    ) {
+      contentType = "application/pdf";
     }
+    headers.set("content-type", contentType || "application/octet-stream");
+
+    // Do not forward upstream Content-Disposition: Kognitos often sends `attachment`, which
+    // forces a file download and breaks <iframe> / inline PDF preview in the vendor UI.
+    const mode = disposition === "attachment" ? "attachment" : "inline";
+    headers.set(
+      "content-disposition",
+      `${mode}; filename="${safeName}"`,
+    );
 
     return new Response(upstream.body, { status: upstream.status, headers });
   } catch (e) {

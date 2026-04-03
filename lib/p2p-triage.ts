@@ -72,10 +72,41 @@ function normalizeLooseText(value: string) {
     .trim();
 }
 
-function normalizeInvoiceKey(raw: string): string | null {
+export function normalizeInvoiceKey(raw: string): string | null {
   const t = raw.trim().toLowerCase().replace(/\s+/g, " ");
   if (!t || t === "—" || t === "unknown invoice") return null;
   return t;
+}
+
+/**
+ * For each invoice number (normalized), the payment recommendation from the latest Kognitos run
+ * whose extracted vendor matches this vendor master. Used for vendor invoice Processed / Pending filters.
+ */
+export function buildLatestPaymentApprovedByInvoiceForVendor(
+  rows: KognitosRunRow[],
+  vendor: Pick<Vendor, "company_name" | "vendor_id">,
+): Map<string, boolean | undefined> {
+  const latest = new Map<
+    string,
+    { approved: boolean | undefined; timeMs: number }
+  >();
+  for (const row of rows) {
+    const extracted = extractVendorFromRun(row.run);
+    if (!vendorMasterMatchesExtracted(extracted, vendor)) continue;
+    const parsed = buildRunSummaryFromRun(row.run);
+    const invKey = normalizeInvoiceKey(parsed.invoiceNumber);
+    if (!invKey) continue;
+    const t = runTimeMs(row);
+    const prev = latest.get(invKey);
+    if (!prev || t > prev.timeMs) {
+      latest.set(invKey, { approved: parsed.paymentApproved, timeMs: t });
+    }
+  }
+  const out = new Map<string, boolean | undefined>();
+  for (const [k, v] of latest) {
+    out.set(k, v.approved);
+  }
+  return out;
 }
 
 function runTimeMs(row: KognitosRunRow): number {
@@ -189,7 +220,10 @@ function triageAlertsFromRun(
   return out;
 }
 
-export function buildP2pTriageAlerts(rows: KognitosRunRow[], max = 3): TriageAlert[] {
+export function buildP2pTriageAlerts(
+  rows: KognitosRunRow[],
+  max?: number,
+): TriageAlert[] {
   const superseded = getSupersededFailedRunNames(rows);
   const sorted = [...rows].sort(
     (a, b) =>
@@ -200,7 +234,7 @@ export function buildP2pTriageAlerts(rows: KognitosRunRow[], max = 3): TriageAle
   for (const row of sorted) {
     for (const alert of triageAlertsFromRun(row, superseded)) {
       out.push(alert);
-      if (out.length >= max) return out;
+      if (max != null && out.length >= max) return out;
     }
   }
   return out;
