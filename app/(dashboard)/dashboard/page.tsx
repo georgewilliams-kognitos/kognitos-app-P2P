@@ -6,15 +6,8 @@ import {
   Clock,
   Building2,
   Zap,
-  Check,
-  X,
   FileCheck,
   ThumbsUp,
-  ThumbsDown,
-  ChevronFirst,
-  ChevronLast,
-  ChevronLeft,
-  ChevronRight,
   ExternalLink,
 } from "lucide-react";
 import {
@@ -24,32 +17,19 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { InvoicesTablesSection } from "@/components/invoices/invoices-tables-section";
+import { TimePeriodSelect } from "@/components/dashboard/time-period-select";
+import { useSharedTimePeriod } from "@/contexts/time-period-context";
 
 import { DOMAIN } from "@/lib/domain.config";
 import { useAuth } from "@/lib/auth-context";
 import {
-  getKognitosInsightsCacheFromDb,
-  listKognitosRunRowsFromDb,
   findVendorByDisplayName,
   findVendorForMaterialName,
+  getKognitosInsightsCacheFromDb,
+  listKognitosRunRowsFromDb,
   listVendors,
   resolveVendorByDisplayName,
   type KognitosRunRow,
@@ -59,17 +39,18 @@ import {
   buildP2pTriageAlerts,
   TRIAGE_CHECK_ORDER,
   type TriageAlert,
+  type TriageCheckKey,
 } from "@/lib/p2p-triage";
 import {
   getReadOverrides,
   setReadOverride,
 } from "@/lib/notification-state";
-import type { KognitosInsights } from "@/lib/types";
 import {
   aggregateResults,
   buildRunSummaryFromRun,
   extractFourWayMatchFromRun,
 } from "@/lib/p2p-insights";
+import type { KognitosInsights } from "@/lib/types";
 import {
   averageRunDurationMs,
   formatDurationMs,
@@ -77,16 +58,10 @@ import {
   topVendorStatsFromRuns,
 } from "@/lib/kognitos/dashboard-metrics";
 import {
-  formatRunTime,
-  getCompletedTimeFromRun,
-  getRunStateDisplayLabel,
   getRunStateLabel,
-  getStateReason,
   isCompletedRun,
-  kognitosRunOpenHref,
-  runIdFromName,
-  type RunStateLabel,
 } from "@/lib/kognitos/run-dashboard";
+import { inSelectedPeriod, type TimePeriod } from "@/lib/dashboard-time-period";
 
 /** Bar chart fills using the approved yellow/olive palette (no gradients). */
 const CHART_BAR = {
@@ -104,36 +79,19 @@ const CHART_BAR = {
   failRow: "bg-[#636d02]",
 } as const;
 
-const RUN_TABLE_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
-type TimePeriod = "last_90_days" | "year_to_date" | "last_year" | "all_time";
-/** Completed checks table: payment recommendation from run summary (same as vendor Invoices Processed/Pending). */
-type CompletedPaymentFilter = "pending" | "processed";
-
-function getPeriodStart(period: TimePeriod, now = new Date()): Date | null {
-  const d = new Date(now);
-  if (period === "all_time") return null;
-  if (period === "last_90_days") {
-    d.setDate(d.getDate() - 90);
-    return d;
+function triageMismatchHeading(key: TriageCheckKey): string {
+  switch (key) {
+    case "documentMatch":
+      return "Document Mismatch";
+    case "quantityAndUnitMatch":
+      return "Quantity and Unit Mismatch";
+    case "valueMatch":
+      return "Value Mismatch";
+    case "coaValidation":
+      return "Quality Check Failed";
+    default:
+      return "Mismatch";
   }
-  if (period === "year_to_date") {
-    return new Date(d.getFullYear(), 0, 1);
-  }
-  return new Date(d.getFullYear() - 1, 0, 1);
-}
-
-function inSelectedPeriod(iso: string | undefined, period: TimePeriod): boolean {
-  if (!iso) return false;
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return false;
-  const now = new Date();
-  const start = getPeriodStart(period, now);
-  if (start == null) return true;
-  if (period === "last_year") {
-    const end = new Date(now.getFullYear(), 0, 1);
-    return t >= start.getTime() && t < end.getTime();
-  }
-  return t >= start.getTime() && t <= now.getTime();
 }
 
 const currencyFmt = new Intl.NumberFormat("en-US", {
@@ -142,32 +100,6 @@ const currencyFmt = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 0,
 });
-
-const stateBadgeVariant: Record<
-  RunStateLabel,
-  "success" | "destructive" | "warning" | "secondary" | "default"
-> = {
-  completed: "success",
-  failed: "destructive",
-  executing: "warning",
-  pending: "secondary",
-  stopped: "warning",
-  stopping: "warning",
-  paused: "warning",
-  awaitingGuidance: "default",
-  unknown: "secondary",
-};
-
-function CheckOrCross({ pass }: { pass: boolean | undefined }) {
-  if (pass === undefined) {
-    return <span className="text-muted-foreground">—</span>;
-  }
-  return pass ? (
-    <Check className="inline-block h-4 w-4 text-success" />
-  ) : (
-    <X className="inline-block h-4 w-4 text-destructive" />
-  );
-}
 
 /** KPI row above “Completed checks” — same layout as Vercel-Test home dashboard. */
 function FourWayMatchKpiCard({
@@ -212,15 +144,10 @@ function FourWayMatchKpiCard({
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const { timePeriod } = useSharedTimePeriod();
   const [insights, setInsights] = useState<KognitosInsights | null>(null);
   const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
-  const [completedPage, setCompletedPage] = useState(0);
-  const [incompletePage, setIncompletePage] = useState(0);
-  const [completedRowsPerPage, setCompletedRowsPerPage] = useState(10);
-  const [incompleteRowsPerPage, setIncompleteRowsPerPage] = useState(10);
-  const [completedPaymentFilter, setCompletedPaymentFilter] =
-    useState<CompletedPaymentFilter>("pending");
-  const [timePeriod, setTimePeriod] = useState<TimePeriod>("all_time");
+  const [vendors, setVendors] = useState<Vendor[]>([]);
   const [triageAlerts, setTriageAlerts] = useState<
     Array<TriageAlert & { vendorHref: string; is_read: boolean }>
   >([]);
@@ -248,9 +175,17 @@ export default function DashboardPage() {
     return () => window.removeEventListener("chat-data-changed", handler);
   }, []);
 
+  useEffect(() => {
+    listVendors()
+      .then(setVendors)
+      .catch(() => setVendors([]));
+  }, []);
+
   const filteredRunRows = useMemo(
     () =>
-      runRows.filter((row) => inSelectedPeriod(row.run.createTime, timePeriod)),
+      runRows.filter((row) =>
+        inSelectedPeriod(row.run.createTime, timePeriod),
+      ),
     [runRows, timePeriod],
   );
 
@@ -258,19 +193,33 @@ export default function DashboardPage() {
     const parsed = filteredRunRows
       .map((row) => extractFourWayMatchFromRun(row.run))
       .filter((x): x is NonNullable<typeof x> => x != null);
-    const summaries = filteredRunRows.map((row) => buildRunSummaryFromRun(row.run));
+    const summaries = filteredRunRows.map((row) =>
+      buildRunSummaryFromRun(row.run),
+    );
     return aggregateResults(parsed, summaries);
   }, [filteredRunRows]);
+
+  const { completedRunRows } = useMemo(() => {
+    const completed = filteredRunRows.filter((row) =>
+      isCompletedRun(row.run, p2pForWidgets),
+    );
+    return { completedRunRows: completed };
+  }, [filteredRunRows, p2pForWidgets]);
 
   /** Only runs with a completed 4-way check (extractable match); processed % is payment-approved within this set. */
   const completedChecksInvoiceStats = useMemo(() => {
     let withCompletedChecks = 0;
     let processedCount = 0;
+    let pendingPaymentsTotalUsd = 0;
     for (const row of filteredRunRows) {
       if (extractFourWayMatchFromRun(row.run) == null) continue;
       withCompletedChecks += 1;
-      if (buildRunSummaryFromRun(row.run).paymentApproved === true) {
+      const summary = buildRunSummaryFromRun(row.run);
+      if (summary.paymentApproved === true) {
         processedCount += 1;
+      } else {
+        const v = summary.poTotalValue;
+        if (v != null && Number.isFinite(v)) pendingPaymentsTotalUsd += v;
       }
     }
     const pendingCount = withCompletedChecks - processedCount;
@@ -278,22 +227,13 @@ export default function DashboardPage() {
       total: withCompletedChecks,
       processedCount,
       pendingCount,
+      pendingPaymentsTotalUsd,
       processedPct:
         withCompletedChecks > 0
           ? Math.round((100 * processedCount) / withCompletedChecks)
           : 0,
     };
   }, [filteredRunRows]);
-
-  const { completedRunRows, incompleteRunRows } = useMemo(() => {
-    const completed = filteredRunRows.filter((row) =>
-      isCompletedRun(row.run, p2pForWidgets),
-    );
-    const incomplete = filteredRunRows.filter((row) =>
-      !isCompletedRun(row.run, p2pForWidgets),
-    );
-    return { completedRunRows: completed, incompleteRunRows: incomplete };
-  }, [filteredRunRows, p2pForWidgets]);
 
   const totalRunsDisplay = useMemo(
     () => filteredRunRows.length,
@@ -471,12 +411,6 @@ export default function DashboardPage() {
       if (!user) return;
       const alerts = buildP2pTriageAlerts(filteredRunRows);
       const overrides = getReadOverrides();
-      let vendors: Vendor[] = [];
-      try {
-        vendors = await listVendors();
-      } catch {
-        /* banner still works with fallback links */
-      }
       const withLinks = alerts.map((a) => {
         const hit = resolveVendorByDisplayName(vendors, a.vendorName);
         return {
@@ -492,84 +426,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [filteredRunRows, user]);
-
-  const completedRunRowsPaymentFiltered = useMemo(() => {
-    return completedRunRows.filter((row) => {
-      const runId = runIdFromName(row.run.name);
-      const enriched = p2pForWidgets.runs?.find((r) => r.runId === runId);
-      const processedForPayment = enriched?.paymentApproved === true;
-      if (completedPaymentFilter === "processed") return processedForPayment;
-      return !processedForPayment;
-    });
-  }, [completedRunRows, p2pForWidgets, completedPaymentFilter]);
-
-  const completedLastPage = useMemo(
-    () =>
-      Math.max(
-        0,
-        Math.ceil(
-          completedRunRowsPaymentFiltered.length / completedRowsPerPage,
-        ) - 1,
-      ),
-    [completedRunRowsPaymentFiltered.length, completedRowsPerPage],
-  );
-
-  const completedPagedRows = useMemo(() => {
-    const start = completedPage * completedRowsPerPage;
-    return completedRunRowsPaymentFiltered.slice(
-      start,
-      start + completedRowsPerPage,
-    );
-  }, [
-    completedRunRowsPaymentFiltered,
-    completedPage,
-    completedRowsPerPage,
-  ]);
-
-  const incompleteLastPage = useMemo(
-    () =>
-      Math.max(
-        0,
-        Math.ceil(incompleteRunRows.length / incompleteRowsPerPage) - 1,
-      ),
-    [incompleteRunRows.length, incompleteRowsPerPage],
-  );
-
-  const incompletePagedRows = useMemo(() => {
-    const start = incompletePage * incompleteRowsPerPage;
-    return incompleteRunRows.slice(start, start + incompleteRowsPerPage);
-  }, [incompleteRunRows, incompletePage, incompleteRowsPerPage]);
-
-  useEffect(() => {
-    const maxPage = Math.max(
-      0,
-      Math.ceil(
-        completedRunRowsPaymentFiltered.length / completedRowsPerPage,
-      ) - 1,
-    );
-    if (completedPage > maxPage) setCompletedPage(maxPage);
-  }, [
-    completedRunRowsPaymentFiltered.length,
-    completedPage,
-    completedRowsPerPage,
-  ]);
-
-  useEffect(() => {
-    const maxPage = Math.max(
-      0,
-      Math.ceil(incompleteRunRows.length / incompleteRowsPerPage) - 1,
-    );
-    if (incompletePage > maxPage) setIncompletePage(maxPage);
-  }, [incompleteRunRows.length, incompletePage, incompleteRowsPerPage]);
-
-  useEffect(() => {
-    setCompletedPage(0);
-  }, [completedRowsPerPage]);
-
-  useEffect(() => {
-    setIncompletePage(0);
-  }, [incompleteRowsPerPage]);
+  }, [filteredRunRows, user, vendors]);
 
   return (
     <div className="space-y-6">
@@ -580,22 +437,7 @@ export default function DashboardPage() {
             {DOMAIN.entity.plural} performance overview
           </p>
         </div>
-        <div className="w-full sm:w-auto">
-          <Select
-            value={timePeriod}
-            onValueChange={(v) => setTimePeriod(v as TimePeriod)}
-          >
-            <SelectTrigger className="w-full sm:w-[180px]">
-              <SelectValue placeholder="Select period" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="last_90_days">Last 90 days</SelectItem>
-              <SelectItem value="year_to_date">Year To Date</SelectItem>
-              <SelectItem value="last_year">Last Year</SelectItem>
-              <SelectItem value="all_time">All Time</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <TimePeriodSelect />
       </div>
 
       <div className="space-y-4">
@@ -623,12 +465,12 @@ export default function DashboardPage() {
                       <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground marker:text-muted-foreground">
                         {byFailureType.map((ft) => {
                           const n = ft.alerts.length;
-                          const label = ft.alerts[0].checkLabel;
                           const rec = ft.alerts[0].recommendation;
                           return (
                             <li key={ft.key}>
-                              {label} Failed - {n}{" "}
-                              {n === 1 ? "Invoice" : "Invoices"} - {rec}
+                              {n} Pending{" "}
+                              {n === 1 ? "Invoice" : "Invoices"} -{" "}
+                              {triageMismatchHeading(ft.key)} - {rec}
                             </li>
                           );
                         })}
@@ -701,14 +543,18 @@ export default function DashboardPage() {
             <FourWayMatchKpiCard
               label="Total Approved Payments"
               value={currencyFmt.format(p2pForWidgets.totalApprovedValue)}
-              description={`${p2pForWidgets.paymentApproveCount} recommended for payment`}
+              description={`${p2pForWidgets.paymentApproveCount} processed invoices`}
               icon={ThumbsUp}
+              href="/invoices?payment=processed"
             />
             <FourWayMatchKpiCard
-              label="Total Rejected Payments"
-              value={currencyFmt.format(p2pForWidgets.totalRejectedValue)}
-              description={`${p2pForWidgets.paymentRejectCount} reject or hold`}
-              icon={ThumbsDown}
+              label="Total Pending Payments"
+              value={currencyFmt.format(
+                completedChecksInvoiceStats.pendingPaymentsTotalUsd,
+              )}
+              description={`${completedChecksInvoiceStats.pendingCount} pending invoices`}
+              icon={Clock}
+              href="/invoices?payment=pending"
             />
           </div>
 
@@ -816,414 +662,8 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Completed checks</CardTitle>
-            <CardDescription>
-              Runs that finished with a completed state (4-way match and related
-              outputs when available)
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {completedRunRows.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                No completed runs in the database yet.
-              </p>
-            ) : (
-              <div className="space-y-4">
-                <Tabs
-                  value={completedPaymentFilter}
-                  onValueChange={(v) => {
-                    setCompletedPaymentFilter(v as CompletedPaymentFilter);
-                    setCompletedPage(0);
-                  }}
-                >
-                  <TabsList>
-                    <TabsTrigger value="pending">Pending</TabsTrigger>
-                    <TabsTrigger value="processed">Processed</TabsTrigger>
-                  </TabsList>
-                </Tabs>
-                {completedRunRowsPaymentFiltered.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    No completed checks in this view.
-                  </p>
-                ) : (
-                  <>
-                <div className="max-w-full overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Invoice Number</TableHead>
-                        <TableHead>PO Number</TableHead>
-                        <TableHead>Goods Receipt</TableHead>
-                        <TableHead
-                          className="w-10 text-center"
-                          title="Document Match"
-                        >
-                          1
-                        </TableHead>
-                        <TableHead
-                          className="w-10 text-center"
-                          title="Quantity and Unit Match"
-                        >
-                          2
-                        </TableHead>
-                        <TableHead
-                          className="w-10 text-center"
-                          title="Value Match"
-                        >
-                          3
-                        </TableHead>
-                        <TableHead
-                          className="w-10 text-center"
-                          title="COA Validation"
-                        >
-                          4
-                        </TableHead>
-                        <TableHead
-                          className="w-10 text-center"
-                          title="Payment approval"
-                        >
-                          P
-                        </TableHead>
-                        <TableHead className="text-right">Value</TableHead>
-                        <TableHead className="text-right">Completed</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {completedPagedRows.map(({ run }) => {
-                      const runId = runIdFromName(run.name);
-                      const enriched = p2pForWidgets.runs?.find((r) => r.runId === runId);
-                      const state = getRunStateLabel(run.state);
-                      const completedTimeStr =
-                        state === "completed"
-                          ? formatRunTime(
-                              enriched?.completedTime ??
-                                getCompletedTimeFromRun(run),
-                            )
-                          : "—";
-                      const href = kognitosRunOpenHref(run.name);
-                      return (
-                        <TableRow key={run.name}>
-                          <TableCell>{enriched?.invoiceNumber ?? "—"}</TableCell>
-                          <TableCell>{enriched?.poNumber ?? "—"}</TableCell>
-                          <TableCell>
-                            {enriched?.goodsReceiptNumber ?? "—"}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <CheckOrCross
-                              pass={enriched?.documentMatch === "PASS"}
-                            />
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <CheckOrCross
-                              pass={enriched?.quantityAndUnitMatch === "PASS"}
-                            />
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <CheckOrCross
-                              pass={enriched?.valueMatch === "PASS"}
-                            />
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <CheckOrCross
-                              pass={enriched?.coaValidation === "PASS"}
-                            />
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <CheckOrCross pass={enriched?.paymentApproved} />
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground">
-                            {enriched?.poTotalValue != null
-                              ? new Intl.NumberFormat("en-US", {
-                                  style: "currency",
-                                  currency: "USD",
-                                  minimumFractionDigits: 0,
-                                  maximumFractionDigits: 2,
-                                }).format(enriched.poTotalValue)
-                              : "—"}
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground">
-                            {state === "completed" ? (
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-muted-foreground hover:underline"
-                              >
-                                {completedTimeStr}
-                              </a>
-                            ) : (
-                              completedTimeStr
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-                  <p className="text-sm text-muted-foreground">
-                    Showing{" "}
-                    {completedRunRowsPaymentFiltered.length === 0
-                      ? 0
-                      : completedPage * completedRowsPerPage + 1}
-                    –
-                    {Math.min(
-                      (completedPage + 1) * completedRowsPerPage,
-                      completedRunRowsPaymentFiltered.length,
-                    )}{" "}
-                    of {completedRunRowsPaymentFiltered.length}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">Rows</span>
-                      <Select
-                        value={String(completedRowsPerPage)}
-                        onValueChange={(v) =>
-                          setCompletedRowsPerPage(Number(v))
-                        }
-                      >
-                        <SelectTrigger size="sm" className="w-[70px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {RUN_TABLE_PAGE_SIZE_OPTIONS.map((size) => (
-                            <SelectItem key={size} value={String(size)}>
-                              {size}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="First page"
-                      disabled={completedPage <= 0}
-                      onClick={() => setCompletedPage(0)}
-                    >
-                      <ChevronFirst className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Previous page"
-                      disabled={completedPage <= 0}
-                      onClick={() =>
-                        setCompletedPage((p) => Math.max(0, p - 1))
-                      }
-                    >
-                      <ChevronLeft className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Next page"
-                      disabled={completedPage >= completedLastPage}
-                      onClick={() =>
-                        setCompletedPage((p) =>
-                          Math.min(completedLastPage, p + 1),
-                        )
-                      }
-                    >
-                      <ChevronRight className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Last page"
-                      disabled={completedPage >= completedLastPage}
-                      onClick={() => setCompletedPage(completedLastPage)}
-                    >
-                      <ChevronLast className="size-4" />
-                    </Button>
-                    </div>
-                  </div>
-                </div>
-                  </>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <InvoicesTablesSection />
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Incomplete checks</CardTitle>
-            <CardDescription>
-              Runs pending, in progress, failed, stopped, or awaiting guidance
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {incompleteRunRows.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                No incomplete runs.
-              </p>
-            ) : (
-              <div className="space-y-4">
-                <div className="max-w-full overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Run ID</TableHead>
-                        <TableHead>Started At</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Reason</TableHead>
-                        <TableHead className="text-right">
-                          More details
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {incompletePagedRows.map(({ run }) => {
-                        const state = getRunStateLabel(run.state);
-                        const href = kognitosRunOpenHref(run.name);
-                        return (
-                          <TableRow key={run.name}>
-                            <TableCell className="max-w-[120px] truncate font-mono text-xs">
-                              {runIdFromName(run.name)}
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">
-                              {formatRunTime(run.createTime)}
-                            </TableCell>
-                            <TableCell>
-                              <Badge
-                                variant={
-                                  stateBadgeVariant[state] ?? "secondary"
-                                }
-                                className={
-                                  state === "stopped"
-                                    ? "border-transparent bg-warning/20 text-foreground"
-                                    : state === "pending"
-                                      ? "border-transparent bg-muted text-foreground"
-                                      : undefined
-                                }
-                              >
-                                {getRunStateDisplayLabel(state)}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">
-                              {getStateReason(run.state)}
-                            </TableCell>
-                            <TableCell className="text-right text-muted-foreground">
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-muted-foreground hover:underline"
-                              >
-                                See Run
-                              </a>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-                  <p className="text-sm text-muted-foreground">
-                    Showing{" "}
-                    {incompleteRunRows.length === 0
-                      ? 0
-                      : incompletePage * incompleteRowsPerPage + 1}
-                    –
-                    {Math.min(
-                      (incompletePage + 1) * incompleteRowsPerPage,
-                      incompleteRunRows.length,
-                    )}{" "}
-                    of {incompleteRunRows.length}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">Rows</span>
-                      <Select
-                        value={String(incompleteRowsPerPage)}
-                        onValueChange={(v) =>
-                          setIncompleteRowsPerPage(Number(v))
-                        }
-                      >
-                        <SelectTrigger size="sm" className="w-[70px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {RUN_TABLE_PAGE_SIZE_OPTIONS.map((size) => (
-                            <SelectItem key={size} value={String(size)}>
-                              {size}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="First page"
-                      disabled={incompletePage <= 0}
-                      onClick={() => setIncompletePage(0)}
-                    >
-                      <ChevronFirst className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Previous page"
-                      disabled={incompletePage <= 0}
-                      onClick={() =>
-                        setIncompletePage((p) => Math.max(0, p - 1))
-                      }
-                    >
-                      <ChevronLeft className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Next page"
-                      disabled={incompletePage >= incompleteLastPage}
-                      onClick={() =>
-                        setIncompletePage((p) =>
-                          Math.min(incompleteLastPage, p + 1),
-                        )
-                      }
-                    >
-                      <ChevronRight className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Last page"
-                      disabled={incompletePage >= incompleteLastPage}
-                      onClick={() => setIncompletePage(incompleteLastPage)}
-                    >
-                      <ChevronLast className="size-4" />
-                    </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
       </div>
 
       {/* Kognitos Automation Insights (moved to bottom) */}
@@ -1272,7 +712,6 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       )}
-
     </div>
   );
 }

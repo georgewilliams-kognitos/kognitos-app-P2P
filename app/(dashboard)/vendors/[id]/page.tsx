@@ -437,9 +437,7 @@ export default function VendorDetailPage({
         <CardContent>
           {invoices.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No validation runs matched this vendor yet. After syncing Kognitos runs, run{" "}
-              <code className="text-xs">npm run reindex:vendor-invoices</code> so supplier IDs from
-              the report are linked to <code className="text-xs">vendor_id</code>.
+              No invoices validated since last data refresh from Kognitos
             </p>
           ) : (
             <Tabs

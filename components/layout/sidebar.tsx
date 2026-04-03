@@ -5,12 +5,12 @@ import { usePathname } from "next/navigation";
 import {
   ClipboardList,
   BarChart3,
-  BookOpen,
   Bell,
   Settings,
   Building2,
   Layers,
   Menu,
+  FileText,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -30,11 +30,11 @@ import {
 const ICON_MAP: Record<string, LucideIcon> = {
   ClipboardList,
   BarChart3,
-  BookOpen,
   Bell,
   Settings,
   Building2,
   Layers,
+  FileText,
 };
 
 const LogoIcon = ICON_MAP[DOMAIN.appLogo] ?? Layers;

@@ -7,6 +7,7 @@ import { canAccessPath, getDefaultPath } from "@/lib/role-permissions";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { ChatPanel } from "@/components/ui/chat-panel";
+import { TimePeriodProvider } from "@/contexts/time-period-context";
 
 export default function DashboardLayout({
   children,
@@ -36,13 +37,15 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="min-h-svh bg-muted/30">
-      <Sidebar />
-      <div className="lg:pl-64">
-        <Topbar />
-        <main className="p-4 lg:p-6">{children}</main>
+    <TimePeriodProvider>
+      <div className="min-h-svh bg-muted/30">
+        <Sidebar />
+        <div className="lg:pl-64">
+          <Topbar />
+          <main className="p-4 lg:p-6">{children}</main>
+        </div>
+        <ChatPanel />
       </div>
-      <ChatPanel />
-    </div>
+    </TimePeriodProvider>
   );
 }

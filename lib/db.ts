@@ -447,6 +447,8 @@ export interface KognitosRunRow {
   id: string;
   name: string;
   run: KognitosRun;
+  /** Raw `kognitos_runs.payload` for client-side invoice file ref extraction. */
+  payloadRaw: Record<string, unknown>;
 }
 
 /** All synced runs for dashboard tables (newest first). */
@@ -460,10 +462,17 @@ export async function listKognitosRunRowsFromDb(): Promise<KognitosRunRow[]> {
   for (const row of data ?? []) {
     const run = parseKognitosRunPayload(row.payload);
     if (run) {
+      const payloadRaw =
+        row.payload != null &&
+        typeof row.payload === "object" &&
+        !Array.isArray(row.payload)
+          ? (row.payload as Record<string, unknown>)
+          : {};
       out.push({
         id: String(row.id),
         name: String(row.name),
         run,
+        payloadRaw,
       });
     }
   }
