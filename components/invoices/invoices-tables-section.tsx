@@ -115,7 +115,12 @@ function paymentFilterFromSearchParams(
   return "pending";
 }
 
-export function InvoicesTablesSection() {
+export function InvoicesTablesSection({
+  showInvoicesOnHold = true,
+}: {
+  /** When false, only the “Invoices Analyzed” card is shown (e.g. Dashboard). */
+  showInvoicesOnHold?: boolean;
+} = {}) {
   const searchParams = useSearchParams();
   const { timePeriod } = useSharedTimePeriod();
   const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
@@ -574,168 +579,170 @@ export function InvoicesTablesSection() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Invoices on hold</CardTitle>
-          <CardDescription>
-            Runs pending, in progress, failed, stopped, or awaiting guidance
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {incompleteRunRows.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No incomplete runs.
-            </p>
-          ) : (
-            <div className="space-y-4">
-              <div className="max-w-full overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Run ID</TableHead>
-                      <TableHead>Started At</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Reason</TableHead>
-                      <TableHead className="text-right">More details</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {incompletePagedRows.map(({ run }) => {
-                      const state = getRunStateLabel(run.state);
-                      const href = kognitosRunOpenHref(run.name);
-                      return (
-                        <TableRow key={run.name}>
-                          <TableCell className="max-w-[120px] truncate font-mono text-xs">
-                            {runIdFromName(run.name)}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {formatRunTime(run.createTime)}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={stateBadgeVariant[state] ?? "secondary"}
-                              className={
-                                state === "stopped"
-                                  ? "border-transparent bg-warning/20 text-foreground"
-                                  : state === "pending"
-                                    ? "border-transparent bg-muted text-foreground"
-                                    : undefined
-                              }
-                            >
-                              {getRunStateDisplayLabel(state)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {getStateReason(run.state)}
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground">
-                            <a
-                              href={href}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-muted-foreground hover:underline"
-                            >
-                              See Run
-                            </a>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-                <p className="text-sm text-muted-foreground">
-                  Showing{" "}
-                  {incompleteRunRows.length === 0
-                    ? 0
-                    : incompletePage * incompleteRowsPerPage + 1}
-                  –
-                  {Math.min(
-                    (incompletePage + 1) * incompleteRowsPerPage,
-                    incompleteRunRows.length,
-                  )}{" "}
-                  of {incompleteRunRows.length}
-                </p>
-                <div className="flex flex-wrap items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">Rows</span>
-                    <Select
-                      value={String(incompleteRowsPerPage)}
-                      onValueChange={(v) =>
-                        setIncompleteRowsPerPage(Number(v))
-                      }
-                    >
-                      <SelectTrigger size="sm" className="w-[70px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {RUN_TABLE_PAGE_SIZE_OPTIONS.map((size) => (
-                          <SelectItem key={size} value={String(size)}>
-                            {size}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="First page"
-                      disabled={incompletePage <= 0}
-                      onClick={() => setIncompletePage(0)}
-                    >
-                      <ChevronFirst className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Previous page"
-                      disabled={incompletePage <= 0}
-                      onClick={() =>
-                        setIncompletePage((p) => Math.max(0, p - 1))
-                      }
-                    >
-                      <ChevronLeft className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Next page"
-                      disabled={incompletePage >= incompleteLastPage}
-                      onClick={() =>
-                        setIncompletePage((p) =>
-                          Math.min(incompleteLastPage, p + 1),
-                        )
-                      }
-                    >
-                      <ChevronRight className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Last page"
-                      disabled={incompletePage >= incompleteLastPage}
-                      onClick={() => setIncompletePage(incompleteLastPage)}
-                    >
-                      <ChevronLast className="size-4" />
-                    </Button>
+      {showInvoicesOnHold && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Invoices on hold</CardTitle>
+            <CardDescription>
+              Runs pending, in progress, failed, stopped, or awaiting guidance
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {incompleteRunRows.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No incomplete runs.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                <div className="max-w-full overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Run ID</TableHead>
+                        <TableHead>Started At</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead className="text-right">More details</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {incompletePagedRows.map(({ run }) => {
+                        const state = getRunStateLabel(run.state);
+                        const href = kognitosRunOpenHref(run.name);
+                        return (
+                          <TableRow key={run.name}>
+                            <TableCell className="max-w-[120px] truncate font-mono text-xs">
+                              {runIdFromName(run.name)}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {formatRunTime(run.createTime)}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={stateBadgeVariant[state] ?? "secondary"}
+                                className={
+                                  state === "stopped"
+                                    ? "border-transparent bg-warning/20 text-foreground"
+                                    : state === "pending"
+                                      ? "border-transparent bg-muted text-foreground"
+                                      : undefined
+                                }
+                              >
+                                {getRunStateDisplayLabel(state)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {getStateReason(run.state)}
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground">
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-muted-foreground hover:underline"
+                              >
+                                See Run
+                              </a>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Showing{" "}
+                    {incompleteRunRows.length === 0
+                      ? 0
+                      : incompletePage * incompleteRowsPerPage + 1}
+                    –
+                    {Math.min(
+                      (incompletePage + 1) * incompleteRowsPerPage,
+                      incompleteRunRows.length,
+                    )}{" "}
+                    of {incompleteRunRows.length}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Rows</span>
+                      <Select
+                        value={String(incompleteRowsPerPage)}
+                        onValueChange={(v) =>
+                          setIncompleteRowsPerPage(Number(v))
+                        }
+                      >
+                        <SelectTrigger size="sm" className="w-[70px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {RUN_TABLE_PAGE_SIZE_OPTIONS.map((size) => (
+                            <SelectItem key={size} value={String(size)}>
+                              {size}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-8"
+                        aria-label="First page"
+                        disabled={incompletePage <= 0}
+                        onClick={() => setIncompletePage(0)}
+                      >
+                        <ChevronFirst className="size-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-8"
+                        aria-label="Previous page"
+                        disabled={incompletePage <= 0}
+                        onClick={() =>
+                          setIncompletePage((p) => Math.max(0, p - 1))
+                        }
+                      >
+                        <ChevronLeft className="size-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-8"
+                        aria-label="Next page"
+                        disabled={incompletePage >= incompleteLastPage}
+                        onClick={() =>
+                          setIncompletePage((p) =>
+                            Math.min(incompleteLastPage, p + 1),
+                          )
+                        }
+                      >
+                        <ChevronRight className="size-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-8"
+                        aria-label="Last page"
+                        disabled={incompletePage >= incompleteLastPage}
+                        onClick={() => setIncompletePage(incompleteLastPage)}
+                      >
+                        <ChevronLast className="size-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Dialog
         open={invoicePreview !== null}

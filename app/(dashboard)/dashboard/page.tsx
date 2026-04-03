@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import {
   Clock,
@@ -13,11 +19,9 @@ import {
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InvoicesTablesSection } from "@/components/invoices/invoices-tables-section";
 import { TimePeriodSelect } from "@/components/dashboard/time-period-select";
@@ -68,7 +72,7 @@ const CHART_BAR = {
   // 1) rgb(207,219,76)  2) rgb(195,208,65)  3) rgb(183,196,53)
   // 4) rgb(124,137,1)   5) rgb(99,109,2)
   track:
-    "rounded-full border border-border/70 bg-muted/45 dark:bg-muted/50",
+    "rounded-xl border border-border/70 bg-muted/45 dark:bg-muted/50",
   // 1st shade
   pass: "bg-[#cfdb4c]",
   // 3rd shade
@@ -78,6 +82,49 @@ const CHART_BAR = {
   // 5th shade (reserved)
   failRow: "bg-[#636d02]",
 } as const;
+
+/** Pending slice: stacked failure types (lighter → darker left to right, DOC → COA). */
+const PENDING_FAIL_SEGMENTS = [
+  {
+    key: "documentMatch" as const,
+    abbr: "DOC",
+    legend: "DOC - Pending due to Document Mismatch",
+  },
+  {
+    key: "quantityAndUnitMatch" as const,
+    abbr: "QTY",
+    legend: "QTY - Pending due to Quantity and Unit Mismatch",
+  },
+  {
+    key: "valueMatch" as const,
+    abbr: "VAL",
+    legend: "VAL - Pending due to Value Mismatch",
+  },
+  {
+    key: "coaValidation" as const,
+    abbr: "COA",
+    legend: "COA - Pending due to COA Validation",
+  },
+] as const;
+
+/** Wider threshold at 13px label size so “proc.” only when truly squeezed. */
+const PROCESSED_LABEL_NARROW_PX = 94;
+
+/** Softer ramp: same light end (#8a942f); third band lifted vs fourth for clearer VAL vs COA. */
+const PENDING_FAIL_COLORS = [
+  "bg-[#8a942f]",
+  "bg-[#7f8a2e]",
+  "bg-[#7c882f]",
+  "bg-[#6c7828]",
+] as const;
+
+/** Dark text on DOC/QTY; light text on VAL/COA (no drop-shadow — it read as a seam between segments). */
+const PENDING_FAIL_LABEL_TEXT = [
+  "text-[#1f2908]",
+  "text-[#1d2608]",
+  "text-[#f6faef]",
+  "text-[#f6faef]",
+] as const;
 
 function triageMismatchHeading(key: TriageCheckKey): string {
   switch (key) {
@@ -137,6 +184,51 @@ function FourWayMatchKpiCard({
         {content}
       </Link>
     </Card>
+  );
+}
+
+function ValidationProcessedSegment({
+  processedCount,
+  pendingCount,
+  roundedClass,
+}: {
+  processedCount: number;
+  pendingCount: number;
+  roundedClass: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setNarrow(el.getBoundingClientRect().width < PROCESSED_LABEL_NARROW_PX);
+  }, [processedCount, pendingCount]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      setNarrow(el.getBoundingClientRect().width < PROCESSED_LABEL_NARROW_PX);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [processedCount, pendingCount]);
+
+  return (
+    <div
+      ref={ref}
+      className={`flex min-w-0 flex-col justify-center px-1 text-center text-[13px] font-semibold leading-tight text-[#374200] transition-[flex] duration-300 ease-out ${CHART_BAR.pass} ${roundedClass}`}
+      style={{
+        flexGrow: processedCount,
+        flexBasis: 0,
+      }}
+      title={`Processed payment: ${processedCount}`}
+    >
+      <span className="min-w-0 truncate">
+        {processedCount} {narrow ? "proc." : "processed"}
+      </span>
+    </div>
   );
 }
 
@@ -331,53 +423,34 @@ export default function DashboardPage() {
     };
   }, [topMaterial?.material]);
 
-  const validationHealth = useMemo(() => {
-    const checks = [
-      { key: "documentMatch" as const, label: "1 - Document Match", order: 1 },
-      {
-        key: "quantityAndUnitMatch" as const,
-        label: "2 - Quantity and Unit Match",
-        order: 2,
-      },
-      { key: "valueMatch" as const, label: "3 - Value Match", order: 3 },
-      { key: "coaValidation" as const, label: "4 - COA Validation", order: 4 },
-    ];
-
-    const byCheck = checks.map(({ key, label, order }) => {
-      let pass = 0;
-      let fail = 0;
-      for (const run of p2pForWidgets.runs) {
-        const status = run[key];
-        if (status === "PASS") pass += 1;
-        else if (status === "FAIL") fail += 1;
-      }
-      const total = pass + fail;
-      return {
-        key,
-        order,
-        label,
-        pass,
-        fail,
-        total,
-        passRate: total > 0 ? Math.round((100 * pass) / total) : 0,
-      };
-    });
-
-    const totalFailedChecks = byCheck.reduce((sum, c) => sum + c.fail, 0);
-    const overallTotal = p2pForWidgets.validationPass + p2pForWidgets.validationFail;
-    const overallPassRate =
-      overallTotal > 0
-        ? Math.round((100 * p2pForWidgets.validationPass) / overallTotal)
-        : 0;
-
-    return {
-      overallPassRate,
-      overallPass: p2pForWidgets.validationPass,
-      overallFail: p2pForWidgets.validationFail,
-      totalFailedChecks,
-      byCheck: byCheck.sort((a, b) => a.order - b.order),
+  /** FAIL counts per check among invoices with completed validation and payment still pending. */
+  const pendingPaymentFailureBreakdown = useMemo(() => {
+    const fails: Record<
+      (typeof PENDING_FAIL_SEGMENTS)[number]["key"],
+      number
+    > = {
+      documentMatch: 0,
+      quantityAndUnitMatch: 0,
+      valueMatch: 0,
+      coaValidation: 0,
     };
-  }, [p2pForWidgets]);
+    for (const row of filteredRunRows) {
+      if (extractFourWayMatchFromRun(row.run) == null) continue;
+      const s = buildRunSummaryFromRun(row.run);
+      if (s.paymentApproved === true) continue;
+      for (const def of PENDING_FAIL_SEGMENTS) {
+        if (s[def.key] === "FAIL") fails[def.key] += 1;
+      }
+    }
+    const items = PENDING_FAIL_SEGMENTS.map((def, i) => ({
+      ...def,
+      count: fails[def.key],
+      colorClass: PENDING_FAIL_COLORS[i],
+      textClass: PENDING_FAIL_LABEL_TEXT[i],
+    }));
+    const totalFailMarks = items.reduce((sum, x) => sum + x.count, 0);
+    return { items, totalFailMarks };
+  }, [filteredRunRows]);
 
   const unreadTriageByVendor = useMemo(() => {
     const groups = new Map<
@@ -517,6 +590,24 @@ export default function DashboardPage() {
           )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FourWayMatchKpiCard
+              label="Total Pending Payments"
+              value={currencyFmt.format(
+                completedChecksInvoiceStats.pendingPaymentsTotalUsd,
+              )}
+              description={`${completedChecksInvoiceStats.pendingCount} pending invoices`}
+              icon={Clock}
+              href="/invoices?payment=pending"
+            />
+            <FourWayMatchKpiCard
+              label="Total Approved Payments"
+              value={currencyFmt.format(p2pForWidgets.totalApprovedValue)}
+              description={`${p2pForWidgets.paymentApproveCount} processed invoices`}
+              icon={ThumbsUp}
+              href="/invoices?payment=processed"
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FourWayMatchKpiCard
               label="Top Vendor"
               value={topVendorDisplayName ?? topVendor?.vendor ?? "—"}
               icon={Building2}
@@ -539,130 +630,134 @@ export default function DashboardPage() {
               }
             />
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <FourWayMatchKpiCard
-              label="Total Approved Payments"
-              value={currencyFmt.format(p2pForWidgets.totalApprovedValue)}
-              description={`${p2pForWidgets.paymentApproveCount} processed invoices`}
-              icon={ThumbsUp}
-              href="/invoices?payment=processed"
-            />
-            <FourWayMatchKpiCard
-              label="Total Pending Payments"
-              value={currencyFmt.format(
-                completedChecksInvoiceStats.pendingPaymentsTotalUsd,
-              )}
-              description={`${completedChecksInvoiceStats.pendingCount} pending invoices`}
-              icon={Clock}
-              href="/invoices?payment=pending"
-            />
-          </div>
 
           <Card className="rounded-xl">
             <CardHeader>
               <CardTitle>Validation Health</CardTitle>
-              <CardDescription>
-                Payment processing vs pending for completed checks; per-check
-                pass rates below
-              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-2 rounded-lg border border-border/70 bg-muted/20 p-2.5">
-                <div className={`flex h-7 w-full overflow-hidden p-0.5 ${CHART_BAR.track}`}>
-                  <div
-                    className={`grid min-w-0 place-items-center text-[11px] font-semibold text-[#374200] transition-[width] duration-300 ease-out ${CHART_BAR.pass} ${
-                      completedChecksInvoiceStats.processedCount <= 0
-                        ? "hidden"
-                        : completedChecksInvoiceStats.pendingCount <= 0
-                          ? "rounded-full"
-                          : "rounded-l-full"
-                    }`}
-                    style={{
-                      width: `${Math.max(0, Math.min(100, completedChecksInvoiceStats.processedPct))}%`,
-                    }}
-                  >
-                    {completedChecksInvoiceStats.processedCount > 0
-                      ? `${completedChecksInvoiceStats.processedCount} processed`
-                      : ""}
-                  </div>
-                  <div
-                    className={`grid min-w-0 place-items-center text-[11px] font-semibold text-[#3f4600] transition-[width] duration-300 ease-out ${CHART_BAR.fail} ${
-                      completedChecksInvoiceStats.pendingCount <= 0
-                        ? "hidden"
-                        : completedChecksInvoiceStats.processedCount <= 0
-                          ? "rounded-full"
-                          : "rounded-r-full"
-                    }`}
-                    style={{
-                      width: `${Math.max(
-                        0,
-                        Math.min(
-                          100,
-                          100 - completedChecksInvoiceStats.processedPct,
-                        ),
-                      )}%`,
-                    }}
-                  >
-                    {completedChecksInvoiceStats.pendingCount > 0
-                      ? `${completedChecksInvoiceStats.pendingCount} pending`
-                      : ""}
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {completedChecksInvoiceStats.total}{" "}
-                  {completedChecksInvoiceStats.total === 1
-                    ? "Invoice"
-                    : "Invoices"}{" "}
-                  • {completedChecksInvoiceStats.processedPct}% processed
+            <CardContent className="space-y-4">
+              {completedChecksInvoiceStats.total === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No invoices with completed validation in this period.
                 </p>
-              </div>
+              ) : (
+                <>
+                  <div
+                    className={`flex h-12 w-full min-w-0 overflow-hidden p-0.5 shadow-sm ${CHART_BAR.track}`}
+                    role="img"
+                    aria-label={`Validation health: ${completedChecksInvoiceStats.processedCount} processed, ${completedChecksInvoiceStats.pendingCount} pending of ${completedChecksInvoiceStats.total} invoices`}
+                  >
+                    {completedChecksInvoiceStats.processedCount > 0 && (
+                      <ValidationProcessedSegment
+                        processedCount={completedChecksInvoiceStats.processedCount}
+                        pendingCount={completedChecksInvoiceStats.pendingCount}
+                        roundedClass={
+                          completedChecksInvoiceStats.pendingCount <= 0
+                            ? "rounded-xl"
+                            : "rounded-l-xl"
+                        }
+                      />
+                    )}
+                    {completedChecksInvoiceStats.pendingCount > 0 && (
+                      <div
+                        className={`flex min-w-0 overflow-hidden ${
+                          completedChecksInvoiceStats.processedCount <= 0
+                            ? "flex-1 rounded-xl"
+                            : "flex-1 rounded-r-xl"
+                        }`}
+                        style={{
+                          flexGrow: completedChecksInvoiceStats.pendingCount,
+                          flexBasis: 0,
+                        }}
+                        title={`Pending payment: ${completedChecksInvoiceStats.pendingCount}`}
+                      >
+                        {pendingPaymentFailureBreakdown.totalFailMarks === 0 ? (
+                          <div
+                            className={`flex w-full items-center justify-center px-1 text-center text-[13px] font-semibold text-[#3f4600] ${CHART_BAR.fail}`}
+                          >
+                            {completedChecksInvoiceStats.pendingCount} pending
+                          </div>
+                        ) : (
+                          <div className="flex h-full min-w-0 flex-1">
+                            {pendingPaymentFailureBreakdown.items.map(
+                              (seg) =>
+                                seg.count > 0 && (
+                                  <div
+                                    key={seg.key}
+                                    className={`flex min-w-0 flex-col justify-center px-0.5 text-center text-[12px] font-semibold leading-tight ${seg.textClass} ${seg.colorClass}`}
+                                    style={{
+                                      flexGrow: seg.count,
+                                      flexBasis: 0,
+                                    }}
+                                    title={`${seg.legend}: ${seg.count}`}
+                                  >
+                                    <span className="truncate">
+                                      {seg.count} {seg.abbr}
+                                    </span>
+                                  </div>
+                                ),
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
-              <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-                {validationHealth.byCheck.map((check) => {
-                  const failImpact =
-                    validationHealth.totalFailedChecks > 0
-                      ? Math.round(
-                          (100 * check.fail) / validationHealth.totalFailedChecks,
-                        )
-                      : 0;
-                  return (
-                    <div
-                      key={check.key}
-                      className="rounded-lg border border-border/70 bg-card px-3 py-2"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-medium">{check.label}</p>
-                        <Badge
-                          variant="secondary"
-                          className="bg-[#c3d041]/35 text-foreground"
-                        >
-                          {check.passRate}% pass
-                        </Badge>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                        <span>
-                          {check.fail} failure{check.fail === 1 ? "" : "s"} ({failImpact}%
-                          impact)
-                        </span>
-                        <span>
-                          {check.pass}/{check.total} passed
-                        </span>
-                      </div>
-                      <div className={`mt-2 h-2 overflow-hidden p-px ${CHART_BAR.track}`}>
-                        <div
-                          className={`h-full rounded-full ${CHART_BAR.fail}`}
-                          style={{ width: `${failImpact}%` }}
-                        />
-                      </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+                    <span>
+                      {completedChecksInvoiceStats.total}{" "}
+                      {completedChecksInvoiceStats.total === 1
+                        ? "invoice"
+                        : "invoices"}{" "}
+                      total · {completedChecksInvoiceStats.pendingCount} pending
+                      · {completedChecksInvoiceStats.processedCount} processed
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-x-4 gap-y-2 border-t border-border/60 pt-3">
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span
+                        className={`size-2.5 shrink-0 rounded-sm ${CHART_BAR.pass}`}
+                        aria-hidden
+                      />
+                      <span className="text-foreground">Processed payment</span>
+                      <span className="text-muted-foreground">
+                        ({completedChecksInvoiceStats.processedCount})
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span
+                        className={`size-2.5 shrink-0 rounded-sm ${CHART_BAR.fail}`}
+                        aria-hidden
+                      />
+                      <span className="text-foreground">Pending payment</span>
+                      <span className="text-muted-foreground">
+                        ({completedChecksInvoiceStats.pendingCount})
+                      </span>
+                    </div>
+                    {pendingPaymentFailureBreakdown.items.map((seg) => (
+                      <div
+                        key={seg.key}
+                        className="flex items-center gap-1.5 text-xs"
+                      >
+                        <span
+                          className={`size-2.5 shrink-0 rounded-sm ${seg.colorClass}`}
+                          aria-hidden
+                        />
+                        <span className="text-foreground">{seg.legend}</span>
+                        <span className="text-muted-foreground">
+                          ({seg.count})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
 
-        <InvoicesTablesSection />
+        <InvoicesTablesSection showInvoicesOnHold={false} />
 
       </div>
 
