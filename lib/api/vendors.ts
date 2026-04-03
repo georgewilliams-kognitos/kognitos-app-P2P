@@ -1,10 +1,11 @@
-import type { Vendor, VendorProduct } from "@/lib/types";
+import type { Vendor, VendorInvoice, VendorProduct } from "@/lib/types";
 import {
   getAllVendors,
   getVendorById as _getVendorById,
   getProductsForVendor as _getProductsForVendor,
   findVendorByDisplayName as _findVendorByDisplayName,
   findVendorForMaterialName as _findVendorForMaterialName,
+  listVendorInvoicesForVendor as _listVendorInvoicesForVendor,
 } from "@/lib/db";
 
 export async function listVendors(): Promise<Vendor[]> {
@@ -31,4 +32,11 @@ export async function findVendorForMaterialName(
   materialName: string,
 ): Promise<{ vendor: Vendor; product: VendorProduct } | null> {
   return _findVendorForMaterialName(materialName);
+}
+
+
+export async function listVendorInvoicesForVendor(
+  vendorId: string,
+): Promise<VendorInvoice[]> {
+  return _listVendorInvoicesForVendor(vendorId);
 }

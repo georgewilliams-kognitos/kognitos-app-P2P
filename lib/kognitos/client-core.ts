@@ -222,6 +222,64 @@ export async function listAllRunsForAutomation(options?: {
   return out;
 }
 
+/**
+ * Same as {@link listRuns} but returns unmodified API JSON so `user_inputs` / `file` structures are preserved for storage.
+ */
+export async function listRunsRaw(options?: {
+  pageSize?: number;
+  filter?: string;
+  pageToken?: string | null;
+}): Promise<{ runs: Record<string, unknown>[]; nextPageToken: string | null }> {
+  const org = requireOrg();
+  const ws = requireWorkspace();
+  const auto = requireAutomation();
+  const pageSize = Math.min(options?.pageSize ?? 100, 1000);
+  const params = new URLSearchParams();
+  params.set("pageSize", String(pageSize));
+  if (options?.pageToken) params.set("pageToken", options.pageToken);
+  if (options?.filter) params.set("filter", options.filter);
+  const path = `/api/v1/organizations/${encodeURIComponent(org)}/workspaces/${encodeURIComponent(ws)}/automations/${encodeURIComponent(auto)}/runs?${params}`;
+  const data = await kognitosFetchJson<Record<string, unknown>>(path);
+  const rawRuns = (data.runs ?? []) as unknown[];
+  const runs = rawRuns.map((r) => (r ?? {}) as Record<string, unknown>);
+  const nextPageToken =
+    (typeof data.nextPageToken === "string" ? data.nextPageToken : null) ??
+    (typeof data.next_page_token === "string" ? data.next_page_token : null);
+  return { runs, nextPageToken };
+}
+
+/** Paginate ListRuns without mapping — preserves `user_inputs` file refs for `kognitos_runs.payload`. */
+export async function listAllRunsForAutomationRaw(options?: {
+  pageSize?: number;
+  filter?: string;
+}): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  let pageToken: string | null = null;
+  do {
+    const page = await listRunsRaw({
+      pageSize: options?.pageSize ?? 100,
+      filter: options?.filter,
+      pageToken,
+    });
+    out.push(...page.runs);
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+
+/** GET run by short id — raw JSON (for payload repair / verification). */
+export async function getRunRaw(
+  runId: string,
+): Promise<Record<string, unknown> | null> {
+  const org = requireOrg();
+  const ws = requireWorkspace();
+  const auto = requireAutomation();
+  const path = `/api/v1/organizations/${encodeURIComponent(org)}/workspaces/${encodeURIComponent(ws)}/automations/${encodeURIComponent(auto)}/runs/${encodeURIComponent(runId)}`;
+  const data = await kognitosFetchJson<Record<string, unknown>>(path);
+  if (!data || typeof data !== "object") return null;
+  return data;
+}
+
 export async function queryInsights(): Promise<KognitosInsights> {
   const org = requireOrg();
   const ws = requireWorkspace();
@@ -290,4 +348,27 @@ export async function getAutomationRunAggregates(): Promise<{
       },
     })),
   };
+}
+
+
+/**
+ * Stream a file from Kognitos org Files API (binary). Caller must not forward credentials to the client.
+ */
+export async function downloadOrganizationFile(fileId: string): Promise<Response> {
+  const org = requireOrg();
+  const enc = encodeURIComponent(fileId);
+  const path = `/api/v1/organizations/${encodeURIComponent(org)}/files/${enc}:download`;
+  const res = await fetch(`${baseUrl()}${path}`, {
+    headers: {
+      Authorization: authHeader(),
+      Accept: "*/*",
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Kognitos download ${res.status} ${path}: ${text.slice(0, 800)}`,
+    );
+  }
+  return res;
 }

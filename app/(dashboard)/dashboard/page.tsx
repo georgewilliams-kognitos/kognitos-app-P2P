@@ -51,7 +51,11 @@ import {
   findVendorForMaterialName,
   type KognitosRunRow,
 } from "@/lib/api";
-import { buildP2pTriageAlerts, type TriageAlert } from "@/lib/p2p-triage";
+import {
+  buildP2pTriageAlerts,
+  TRIAGE_CHECK_ORDER,
+  type TriageAlert,
+} from "@/lib/p2p-triage";
 import {
   getReadOverrides,
   setReadOverride,
@@ -291,6 +295,9 @@ export default function DashboardPage() {
   const [topVendorHref, setTopVendorHref] = useState<string | undefined>(
     undefined,
   );
+  const [topVendorDisplayName, setTopVendorDisplayName] = useState<
+    string | undefined
+  >(undefined);
   const [topMaterialHref, setTopMaterialHref] = useState<string | undefined>(
     undefined,
   );
@@ -299,16 +306,23 @@ export default function DashboardPage() {
     let cancelled = false;
     const resolveTopVendorHref = async () => {
       if (!topVendor?.vendor) {
-        if (!cancelled) setTopVendorHref(undefined);
+        if (!cancelled) {
+          setTopVendorHref(undefined);
+          setTopVendorDisplayName(undefined);
+        }
         return;
       }
       try {
         const hit = await findVendorByDisplayName(topVendor.vendor);
         if (!cancelled) {
           setTopVendorHref(hit ? `/vendors/${hit.vendor_id}` : "/vendors");
+          setTopVendorDisplayName(hit?.company_name ?? topVendor.vendor);
         }
       } catch {
-        if (!cancelled) setTopVendorHref("/vendors");
+        if (!cancelled) {
+          setTopVendorHref("/vendors");
+          setTopVendorDisplayName(topVendor.vendor);
+        }
       }
     };
     resolveTopVendorHref();
@@ -430,6 +444,7 @@ export default function DashboardPage() {
             const hit = await findVendorByDisplayName(a.vendorName);
             return {
               ...a,
+              vendorName: hit?.company_name ?? a.vendorName,
               vendorHref: hit ? `/vendors/${hit.vendor_id}` : "/vendors",
               is_read: overrides[a.id] ?? false,
             };
@@ -525,50 +540,70 @@ export default function DashboardPage() {
                 <CardTitle className="text-base leading-none">Action Items</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 pt-0">
-                {unreadTriageByVendor.map((vendorGroup) => (
-                  <div
-                    key={`${vendorGroup.vendorName}-${vendorGroup.vendorHref}`}
-                    className="rounded-lg border border-border/70 bg-card px-3 py-2"
-                  >
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold">{vendorGroup.vendorName}</p>
-                      <Link
-                        href={vendorGroup.vendorHref}
-                        className="inline-flex items-center gap-1 text-sm font-medium text-red-500 hover:underline"
-                      >
-                        See Vendor
-                        <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    </div>
-                    <div className="space-y-1">
-                      {vendorGroup.alerts.map((alert) => (
-                        <p key={alert.id} className="text-sm text-muted-foreground">
-                          {alert.checkLabel} Failed - Invoice {alert.invoiceNumber} -{" "}
-                          {alert.recommendation}
-                        </p>
-                      ))}
-                    </div>
+                {unreadTriageByVendor.map((vendorGroup) => {
+                  const byFailureType = TRIAGE_CHECK_ORDER.map((key) => ({
+                    key,
+                    alerts: vendorGroup.alerts.filter((a) => a.checkKey === key),
+                  })).filter((g) => g.alerts.length > 0);
+
+                  return (
                     <div
-                      className="mt-2 flex items-center gap-3"
+                      key={`${vendorGroup.vendorName}-${vendorGroup.vendorHref}`}
+                      className="rounded-lg border border-border/70 bg-card px-3 py-2"
                     >
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          const ids = new Set(vendorGroup.alerts.map((a) => a.id));
-                          vendorGroup.alerts.forEach((a) => setReadOverride(a.id, true));
-                          setTriageAlerts((prev) =>
-                            prev.map((n) =>
-                              ids.has(n.id) ? { ...n, is_read: true } : n,
-                            ),
+                      <p className="mb-2 text-sm font-semibold">
+                        {vendorGroup.vendorName}
+                      </p>
+                      <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground marker:text-muted-foreground">
+                        {byFailureType.map((ft) => {
+                          const n = ft.alerts.length;
+                          const label = ft.alerts[0].checkLabel;
+                          const rec = ft.alerts[0].recommendation;
+                          return (
+                            <li key={ft.key}>
+                              {label} Failed - {n}{" "}
+                              {n === 1 ? "Invoice" : "Invoices"} - {rec}
+                            </li>
                           );
-                        }}
-                      >
-                        Mark as Read
-                      </Button>
+                        })}
+                      </ul>
+                      <div className="mt-3 flex flex-wrap items-center justify-start gap-2">
+                        <Button
+                          asChild
+                          size="sm"
+                          className="bg-emerald-600 font-semibold text-white shadow-sm hover:bg-emerald-100 hover:text-black focus-visible:ring-emerald-500/90 dark:bg-emerald-600 dark:hover:bg-emerald-200 dark:hover:text-black"
+                        >
+                          <Link
+                            href={vendorGroup.vendorHref}
+                            className="inline-flex items-center gap-1.5"
+                          >
+                            See Vendor
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </Link>
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const ids = new Set(
+                              vendorGroup.alerts.map((a) => a.id),
+                            );
+                            vendorGroup.alerts.forEach((a) =>
+                              setReadOverride(a.id, true),
+                            );
+                            setTriageAlerts((prev) =>
+                              prev.map((row) =>
+                                ids.has(row.id) ? { ...row, is_read: true } : row,
+                              ),
+                            );
+                          }}
+                        >
+                          Mark as Read
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </CardContent>
             </Card>
           )}
@@ -581,7 +616,7 @@ export default function DashboardPage() {
             />
             <FourWayMatchKpiCard
               label="Top Vendor"
-              value={topVendor?.vendor ?? "—"}
+              value={topVendorDisplayName ?? topVendor?.vendor ?? "—"}
               icon={Building2}
               href={topVendorHref}
               description={

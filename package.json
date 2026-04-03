@@ -9,7 +9,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "seed": "npx tsx scripts/seed.ts"
+    "seed": "npx tsx scripts/seed.ts",
+    "reindex:vendor-invoices": "npx tsx scripts/reindex-vendor-invoices.ts",
+    "refresh:run-payloads": "npx tsx scripts/refresh-kognitos-run-payloads.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",

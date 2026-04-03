@@ -33,6 +33,7 @@ export {
   getProductsForVendor,
   findVendorByDisplayName,
   findVendorForMaterialName,
+  listVendorInvoicesForVendor,
 } from "./vendors";
 
 export {
@@ -41,3 +42,5 @@ export {
   listKognitosRunRowsFromDb,
   type KognitosRunRow,
 } from "@/lib/db";
+
+export type { VendorInvoice } from "@/lib/types";

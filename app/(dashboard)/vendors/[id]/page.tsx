@@ -4,20 +4,53 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
-import { ArrowLeft, FileText, Truck, PackageCheck } from "lucide-react";
-import { getVendorById, getProductsForVendor } from "@/lib/api";
-import type { Vendor, VendorProduct } from "@/lib/types";
+import { ArrowLeft, Download, ExternalLink, FileText, Truck, PackageCheck } from "lucide-react";
+import {
+  getVendorById,
+  getProductsForVendor,
+  listKognitosRunRowsFromDb,
+  listVendorInvoicesForVendor,
+  type KognitosRunRow,
+} from "@/lib/api";
+import type { Vendor, VendorInvoice, VendorProduct } from "@/lib/types";
+import {
+  buildP2pTriageAlertsForVendor,
+  type TriageAlert,
+} from "@/lib/p2p-triage";
+import { VendorActionItemsBanner } from "@/components/vendors/vendor-action-items-banner";
 import { formatCurrency } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
   return format(d, "MMM d, yyyy");
+}
+
+function invoiceFileHref(
+  vendorId: string,
+  inv: VendorInvoice,
+  disposition?: "attachment",
+) {
+  const q = new URLSearchParams({
+    vendorId,
+    runId: inv.kognitos_run_id,
+    inputKey: inv.input_key,
+  });
+  if (disposition) q.set("disposition", disposition);
+  return `/api/kognitos/invoice-file?${q.toString()}`;
 }
 
 export default function VendorDetailPage({
@@ -30,6 +63,8 @@ export default function VendorDetailPage({
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [products, setProducts] = useState<VendorProduct[]>([]);
   const [notFound, setNotFound] = useState(false);
+  const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
+  const [invoices, setInvoices] = useState<VendorInvoice[]>([]);
 
   useEffect(() => {
     getVendorById(id).then((data) => {
@@ -41,6 +76,23 @@ export default function VendorDetailPage({
     });
     getProductsForVendor(id).then(setProducts).catch(console.error);
   }, [id]);
+
+  useEffect(() => {
+    listKognitosRunRowsFromDb()
+      .then(setRunRows)
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    listVendorInvoicesForVendor(id)
+      .then(setInvoices)
+      .catch(console.error);
+  }, [id]);
+
+  const vendorTriageAlerts = useMemo((): TriageAlert[] => {
+    if (!vendor) return [];
+    return buildP2pTriageAlertsForVendor(runRows, vendor);
+  }, [runRows, vendor]);
 
   const topProducts = useMemo(
     () =>
@@ -92,6 +144,8 @@ export default function VendorDetailPage({
           All Vendors
         </Link>
       </Button>
+
+      <VendorActionItemsBanner vendor={vendor} alerts={vendorTriageAlerts} />
 
       <Card>
         <CardHeader className="pb-0">
@@ -157,6 +211,72 @@ export default function VendorDetailPage({
               </p>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Invoices</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {invoices.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No validation runs matched this vendor yet. After syncing Kognitos runs, run{" "}
+              <code className="text-xs">npm run reindex:vendor-invoices</code> so supplier IDs from
+              the report are linked to <code className="text-xs">vendor_id</code>.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Run</TableHead>
+                  <TableHead className="text-right">PDF</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {invoices.map((inv) => (
+                  <TableRow key={inv.id}>
+                    <TableCell className="font-medium">
+                      {inv.invoice_number ?? "—"}
+                    </TableCell>
+                    <TableCell>{inv.invoice_date_text ?? "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {inv.kognitos_run_id}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {inv.kognitos_file_id ? (
+                        <div className="flex justify-end gap-2">
+                          <Button variant="outline" size="sm" asChild>
+                            <a
+                              href={invoiceFileHref(vendor.vendor_id, inv)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <ExternalLink className="mr-1 size-3.5" />
+                              View
+                            </a>
+                          </Button>
+                          <Button variant="outline" size="sm" asChild>
+                            <a
+                              href={invoiceFileHref(vendor.vendor_id, inv, "attachment")}
+                              download
+                            >
+                              <Download className="mr-1 size-3.5" />
+                              Download
+                            </a>
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Report only</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
 

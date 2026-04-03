@@ -19,6 +19,7 @@ export function setReadOverride(id: string, isRead: boolean) {
   const current = getReadOverrides();
   current[id] = isRead;
   window.localStorage.setItem(KEY, JSON.stringify(current));
+  window.dispatchEvent(new Event("kognitos-read-overrides-changed"));
 }
 
 export function applyReadOverrides<T extends { id: string; is_read: boolean }>(

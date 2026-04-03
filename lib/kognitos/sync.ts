@@ -1,38 +1,17 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import {
-  aggregateResults,
-  buildRunSummaryFromRun,
-  extractFourWayMatchFromRun,
-  getStateLabel,
-  type FourWayMatchResult,
-  type P2PInsights,
-} from "@/lib/p2p-insights";
-import { parseKognitosRunPayload } from "./map-run";
+import { getStateLabel } from "@/lib/p2p-insights";
 import {
   getAutomationRunAggregates,
-  listAllRunsForAutomation,
+  listAllRunsForAutomationRaw,
   queryInsights,
   queryMetrics,
 } from "./client";
+import { recomputeP2pInsightsFromDb } from "./recompute-p2p-insights-from-db";
+import { getRequestIdFromRunPayload, getRunTimesFromPayload } from "./run-payload";
 import { runShortIdFromName } from "./stage";
+import { reindexVendorInvoicesForRun } from "./vendor-invoice-index";
 
-export async function recomputeP2pInsightsFromDb(): Promise<P2PInsights> {
-  if (!supabaseAdmin) {
-    return aggregateResults([], []);
-  }
-  const { data, error } = await supabaseAdmin.from("kognitos_runs").select("payload");
-  if (error) throw error;
-  const results: FourWayMatchResult[] = [];
-  const summaries = [];
-  for (const row of data ?? []) {
-    const run = parseKognitosRunPayload(row.payload);
-    if (!run) continue;
-    const parsed = extractFourWayMatchFromRun(run);
-    if (parsed) results.push(parsed);
-    summaries.push(buildRunSummaryFromRun(run));
-  }
-  return aggregateResults(results, summaries);
-}
+export { recomputeP2pInsightsFromDb } from "./recompute-p2p-insights-from-db";
 
 async function listExistingRunIds(): Promise<Set<string>> {
   if (!supabaseAdmin) return new Set();
@@ -98,7 +77,7 @@ export async function runKognitosRefresh(): Promise<KognitosRefreshResult> {
     ? undefined
     : buildIncrementalCreateTimeFilter(lastCreateIso);
 
-  const remote = await listAllRunsForAutomation({
+  const remote = await listAllRunsForAutomationRaw({
     pageSize: 100,
     filter,
   });
@@ -107,19 +86,21 @@ export async function runKognitosRefresh(): Promise<KognitosRefreshResult> {
   const inserted: string[] = [];
 
   for (const run of remote) {
-    const id = runShortIdFromName(run.name);
+    const name = String(run.name ?? "");
+    const id = runShortIdFromName(name);
     if (!id) continue;
     if (existingIds.has(id)) {
       skippedAlreadyInDb += 1;
       continue;
     }
 
+    const times = getRunTimesFromPayload(run);
     const row = {
       id,
-      name: run.name,
-      payload: run as unknown as Record<string, unknown>,
-      create_time: run.createTime || null,
-      update_time: run.updateTime || null,
+      name,
+      payload: run,
+      create_time: times.create,
+      update_time: times.update,
     };
     const { error } = await supabaseAdmin.from("kognitos_runs").insert(row);
     if (error) {
@@ -133,7 +114,12 @@ export async function runKognitosRefresh(): Promise<KognitosRefreshResult> {
     inserted.push(id);
     existingIds.add(id);
 
-    const reqId = run.userInputs?.request_id;
+    await reindexVendorInvoicesForRun(
+      id,
+      row.payload as Record<string, unknown>,
+    );
+
+    const reqId = getRequestIdFromRunPayload(run);
     if (reqId) {
       await supabaseAdmin
         .from("requests")

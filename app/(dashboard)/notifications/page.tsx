@@ -45,6 +45,7 @@ export default function NotificationsPage() {
           const triageNotifs: UINotification[] = await Promise.all(
             triage.map(async (t) => {
               const hit = await findVendorByDisplayName(t.vendorName);
+              const displayVendorName = hit?.company_name ?? t.vendorName;
               return {
                 id: t.id,
                 user_id: user!.id,
@@ -56,7 +57,7 @@ export default function NotificationsPage() {
                 triage_meta: {
                   checkLabel: t.checkLabel,
                   invoiceNumber: t.invoiceNumber,
-                  vendorName: t.vendorName,
+                  vendorName: displayVendorName,
                   materialName: t.materialName,
                   totalInvoiceValueText: t.totalInvoiceValueText,
                   recommendation: t.recommendation,

@@ -16,6 +16,7 @@ import type {
   Rule,
   Vendor,
   VendorProduct,
+  VendorInvoice,
   KognitosRun,
   KognitosInsights,
 } from "./types";
@@ -261,10 +262,16 @@ function normalizeLooseText(value: string) {
 export async function findVendorByDisplayName(
   displayName: string,
 ): Promise<Vendor | null> {
+  const trimmed = displayName.trim();
+  if (!trimmed) return null;
+
+  const vendors = await getAllVendors();
+  const byVendorId = vendors.find((v) => v.vendor_id === trimmed);
+  if (byVendorId) return byVendorId;
+
   const normalized = normalizeLooseText(displayName);
   if (!normalized) return null;
 
-  const vendors = await getAllVendors();
   const exact = vendors.find(
     (v) => normalizeLooseText(v.company_name) === normalized,
   );
@@ -377,6 +384,21 @@ export async function markNotificationRead(id: string): Promise<void> {
     .update({ is_read: true })
     .eq("id", id);
   if (error) throw error;
+}
+
+
+
+/** Invoices (indexed file metadata) for a vendor, newest first. */
+export async function listVendorInvoicesForVendor(
+  vendorId: string,
+): Promise<VendorInvoice[]> {
+  const { data, error } = await sb()
+    .from("vendor_invoices")
+    .select("*")
+    .eq("vendor_id", vendorId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as VendorInvoice[];
 }
 
 // ── Kognitos (reads from synced Supabase tables) ───────────────

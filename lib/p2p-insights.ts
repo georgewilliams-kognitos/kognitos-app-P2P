@@ -325,6 +325,44 @@ function collectNamedFieldValues(
   }
 }
 
+/**
+ * Best-effort invoice / document date from extraction fields or markdown report.
+ */
+export function extractInvoiceDateTextFromRun(run: KognitosRun): string {
+  const fromFields = extractExtractionFieldValuesFromRun(run, [
+    "invoice_date",
+    "Invoice Date",
+    "supplier_invoice_date",
+    "posting_date",
+    "document_date",
+  ]);
+  const direct = fromFields.find((v) => v.trim().length > 0);
+  if (direct) return direct.trim();
+  const outputs = run.state?.completed?.outputs;
+  const md =
+    outputs && typeof outputs === "object"
+      ? getText((outputs as Record<string, unknown>).markdown_report)
+      : "";
+  const parsed = extractInvoiceDateFromMarkdown(md);
+  return parsed ?? "—";
+}
+
+function extractInvoiceDateFromMarkdown(markdown: string): string | null {
+  if (!markdown?.trim()) return null;
+  const patterns = [
+    /\*\*Invoice Date[^*]*:\*\*\s*([^\n]+)/i,
+    /\*\*Invoice Date\*\*:\s*([^\n]+)/i,
+    /\*\*Document Date[^*]*:\*\*\s*([^\n]+)/i,
+    /\|\s*Invoice Date\s*\|\s*([^|\n]+)/i,
+  ];
+  for (const re of patterns) {
+    const m = markdown.match(re);
+    const s = m?.[1]?.trim();
+    if (s && s.length > 0 && s.length < 120) return s;
+  }
+  return null;
+}
+
 export function extractExtractionFieldValuesFromRun(
   run: KognitosRun,
   fieldNames: string[],
@@ -346,6 +384,71 @@ export function extractExtractionFieldValuesFromRun(
   return values
     .map((v) => v.trim())
     .filter((v) => v.length > 0 && v !== "[object Object]");
+}
+
+/**
+ * Parses the "Quantity and Unit Match" row in the Validation Results markdown table
+ * (e.g. invoice line showing `120 PC` before PASS/FAIL).
+ */
+function extractQuantityAndUnitTextFromMarkdown(markdown: string): string | null {
+  if (!markdown?.trim()) return null;
+  for (const line of markdown.split(/\r?\n/)) {
+    if (!line.includes("|") || !/\bQuantity and Unit Match\b/i.test(line)) continue;
+    const parts = line.split("|").map((s) => s.trim());
+    const idx = parts.findIndex((c) => /quantity\s+and\s+unit\s+match/i.test(c));
+    if (idx < 0) continue;
+    const tail = parts.slice(idx + 1).filter((c) => c.length > 0);
+    const candidates = tail.filter((c) => !/^(PASS|FAIL)$/i.test(c));
+    for (const c of candidates) {
+      const t = c.replace(/\s+/g, " ").trim();
+      if (
+        /^\d/.test(t) &&
+        /\b(PC|EA|CS|KG|G|MG|L|ML|UN|UNIT|PCE|PIECE|BOX|BTL|ROL|YD|M\b)/i.test(t)
+      ) {
+        return t;
+      }
+    }
+    for (const c of candidates) {
+      const t = c.replace(/\s+/g, " ").trim();
+      if (/^\d+[.,]?\d*\s+[A-Za-z./]+$/.test(t)) return t;
+    }
+    for (const c of candidates) {
+      const t = c.replace(/\s+/g, " ").trim();
+      if (/^\d/.test(t) && !/^invoice\b/i.test(t)) return t;
+    }
+  }
+  return null;
+}
+
+/**
+ * Quantity + unit for display (prefers Validation Results row in markdown_report).
+ */
+export function extractQuantityAndUnitTextFromRun(run: KognitosRun): string {
+  const outputs = run.state?.completed?.outputs;
+  const md =
+    outputs && typeof outputs === "object"
+      ? getText((outputs as Record<string, unknown>).markdown_report)
+      : "";
+  const fromTable = extractQuantityAndUnitTextFromMarkdown(md);
+  if (fromTable) return fromTable;
+  const counts = extractExtractionFieldValuesFromRun(run, [
+    "count",
+    "quantity",
+    "qty",
+    "ordered_quantity",
+    "invoice_quantity",
+  ]);
+  const units = extractExtractionFieldValuesFromRun(run, [
+    "uom",
+    "unit",
+    "unit_of_measure",
+    "UOM",
+  ]);
+  if (counts[0]?.trim() && units[0]?.trim()) {
+    return `${counts[0].trim()} ${units[0].trim()}`.replace(/\s+/g, " ");
+  }
+  if (counts[0]?.trim()) return counts[0].trim();
+  return "N/A";
 }
 
 /**
@@ -436,7 +539,8 @@ function parseSupplierFromSapTransactionSummary(markdown: string): string | null
       continue;
 
     const val = cells[supplierCol]?.trim() ?? "";
-    if (!val || /^plant$/i.test(val) || /^\d+$/.test(val)) continue;
+    if (!val || /^plant$/i.test(val)) continue;
+    /* SAP often uses numeric supplier / vendor IDs (e.g. 17300016) — include them for matching to vendors.vendor_id. */
     counts.set(val, (counts.get(val) ?? 0) + 1);
   }
 
@@ -476,10 +580,23 @@ export function parseVendorNameFromMarkdown(markdown: string): string | null {
 /** Vendor/supplier from user inputs or completed markdown outputs. */
 export function extractVendorFromRun(run: KognitosRun): string | null {
   const outputs = run.state?.completed?.outputs;
-  if (outputs && typeof outputs === "object") {
-    const fromExtraction = extractVendorFromExtractionOutputs(
-      outputs as Record<string, unknown>,
-    );
+  const outObj =
+    outputs && typeof outputs === "object"
+      ? (outputs as Record<string, unknown>)
+      : null;
+
+  // Prefer markdown (SAP Transaction Summary includes numeric supplier IDs like 17300016) over
+  // IDP extraction, which often returns a display name and would skip the ERP id used in `vendors.vendor_id`.
+  if (outObj) {
+    const md = getText(outObj.markdown_report);
+    if (md) {
+      const fromMd = parseVendorNameFromMarkdown(md);
+      if (fromMd) return fromMd;
+    }
+  }
+
+  if (outObj) {
+    const fromExtraction = extractVendorFromExtractionOutputs(outObj);
     if (fromExtraction) return fromExtraction;
   }
 
@@ -494,13 +611,6 @@ export function extractVendorFromRun(run: KognitosRun): string | null {
       const v = ui[key]?.trim();
       if (v && isLikelyVendorName(v)) return v;
     }
-  }
-  if (outputs && typeof outputs === "object") {
-    const md = getText(
-      (outputs as Record<string, unknown>).markdown_report,
-    );
-    const fromMd = parseVendorNameFromMarkdown(md);
-    if (fromMd) return fromMd;
   }
   return null;
 }

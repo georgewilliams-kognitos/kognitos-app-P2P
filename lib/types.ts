@@ -154,6 +154,21 @@ export interface Vendor {
   updated_at: string | null;
 }
 
+/** Invoice row from Kognitos runs: file-backed and/or validation-report metadata. */
+export interface VendorInvoice {
+  id: string;
+  kognitos_run_id: string;
+  vendor_id: string;
+  input_key: string;
+  /** Kognitos Files API id, or empty string when indexed from validation report only (no PDF). */
+  kognitos_file_id: string;
+  file_name: string | null;
+  mime_type: string | null;
+  invoice_number: string | null;
+  invoice_date_text: string | null;
+  created_at: string;
+}
+
 /** Product/material catalog row scoped to a vendor. */
 export interface VendorProduct {
   product_id: string;
