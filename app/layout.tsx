@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
+import { DOMAIN } from "@/lib/domain.config";
 
 export const metadata: Metadata = {
-  title: "PriorAuth - Prior Authorization Management",
-  description:
-    "Streamline prior authorization workflows with intelligent automation",
+  title: "P2P APP",
+  description: DOMAIN.appDescription,
 };
 
 export default function RootLayout({

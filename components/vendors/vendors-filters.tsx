@@ -11,6 +11,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export interface VendorFilters {
   search: string;
@@ -97,34 +98,21 @@ export function VendorsFiltersBar({
         </PopoverContent>
       </Popover>
 
-      <div className="flex items-center rounded-md border bg-background">
-        {[
-          { value: "all", label: "All Risks" },
-          { value: "low", label: "Low" },
-          { value: "medium", label: "Medium" },
-          { value: "high", label: "High" },
-          { value: "critical", label: "Critical" },
-        ].map((item) => {
-          const isActive =
-            (item.value === "all" && filters.risk === null) ||
-            filters.risk === item.value;
-          return (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() =>
-                updateFilter("risk", item.value === "all" ? null : item.value)
-              }
-              className={`px-3 py-1.5 text-xs font-medium transition-colors first:rounded-l-md last:rounded-r-md ${
-                isActive
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {item.label}
-            </button>
-          );
-        })}
+      <div className="min-w-0 max-w-full overflow-x-auto sm:max-w-none sm:overflow-visible">
+        <Tabs
+          value={filters.risk ?? "all"}
+          onValueChange={(v) =>
+            updateFilter("risk", v === "all" ? null : v)
+          }
+        >
+          <TabsList>
+            <TabsTrigger value="all">All Risks</TabsTrigger>
+            <TabsTrigger value="low">Low</TabsTrigger>
+            <TabsTrigger value="medium">Medium</TabsTrigger>
+            <TabsTrigger value="high">High</TabsTrigger>
+            <TabsTrigger value="critical">Critical</TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
       {hasActiveFilters && (

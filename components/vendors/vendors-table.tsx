@@ -12,7 +12,16 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { ArrowUpDown, ChevronDown, ChevronUp, Columns3 } from "lucide-react";
+import {
+  ArrowUpDown,
+  ChevronDown,
+  ChevronFirst,
+  ChevronLast,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Columns3,
+} from "lucide-react";
 import type { Vendor } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -274,22 +283,52 @@ export function VendorsTable({ items }: { items: Vendor[] }) {
             </Select>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <Button
+              type="button"
               variant="outline"
-              size="sm"
-              onClick={() => table.previousPage()}
+              size="icon"
+              className="size-8"
+              aria-label="First page"
               disabled={!table.getCanPreviousPage()}
+              onClick={() => table.setPageIndex(0)}
             >
-              Previous
+              <ChevronFirst className="size-4" />
             </Button>
             <Button
+              type="button"
               variant="outline"
-              size="sm"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
+              size="icon"
+              className="size-8"
+              aria-label="Previous page"
+              disabled={!table.getCanPreviousPage()}
+              onClick={() => table.previousPage()}
             >
-              Next
+              <ChevronLeft className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="size-8"
+              aria-label="Next page"
+              disabled={!table.getCanNextPage()}
+              onClick={() => table.nextPage()}
+            >
+              <ChevronRight className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="size-8"
+              aria-label="Last page"
+              disabled={!table.getCanNextPage()}
+              onClick={() =>
+                table.setPageIndex(Math.max(0, table.getPageCount() - 1))
+              }
+            >
+              <ChevronLast className="size-4" />
             </Button>
           </div>
         </div>

@@ -32,6 +32,7 @@ export {
   getVendorById,
   getProductsForVendor,
   findVendorByDisplayName,
+  resolveVendorByDisplayName,
   findVendorForMaterialName,
   listVendorInvoicesForVendor,
 } from "./vendors";

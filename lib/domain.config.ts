@@ -37,8 +37,9 @@ export interface NavItem {
 
 export const DOMAIN = {
   // ── App identity ──────────────────────────────────────────────
-  appName: "WorkflowApp",
-  appDescription: "Workflow Management Platform",
+  appName: "P2P App",
+  appDescription:
+    "A procure-to-pay dashboard for validating supplier invoices, managing vendors, and triaging payment holds before release",
   appLogo: "Layers", // Lucide icon name
   entitySlug: "requests", // used in URLs: /requests/[id]
 

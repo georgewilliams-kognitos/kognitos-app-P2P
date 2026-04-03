@@ -9,7 +9,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { DOMAIN } from "@/lib/domain.config";
-import { getNotificationsForUser, findVendorByDisplayName } from "@/lib/api";
+import {
+  getNotificationsForUser,
+  listVendors,
+  resolveVendorByDisplayName,
+} from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import type { Notification } from "@/lib/types";
 import { listKognitosRunRowsFromDb } from "@/lib/api";
@@ -39,32 +43,34 @@ export default function NotificationsPage() {
     if (!user) return;
 
     function load() {
-      Promise.all([getNotificationsForUser(user!.id), listKognitosRunRowsFromDb()])
-        .then(async ([data, rows]) => {
+      Promise.all([
+        getNotificationsForUser(user!.id),
+        listKognitosRunRowsFromDb(),
+        listVendors().catch(() => []),
+      ])
+        .then(([data, rows, vendors]) => {
           const triage = buildP2pTriageAlerts(rows, 3);
-          const triageNotifs: UINotification[] = await Promise.all(
-            triage.map(async (t) => {
-              const hit = await findVendorByDisplayName(t.vendorName);
-              const displayVendorName = hit?.company_name ?? t.vendorName;
-              return {
-                id: t.id,
-                user_id: user!.id,
-                request_id: null,
-                message: `[P2P Triage] ${t.message}`,
-                is_read: false,
-                created_at: t.createdAt,
-                vendor_href: hit ? `/vendors/${hit.vendor_id}` : "/vendors",
-                triage_meta: {
-                  checkLabel: t.checkLabel,
-                  invoiceNumber: t.invoiceNumber,
-                  vendorName: displayVendorName,
-                  materialName: t.materialName,
-                  totalInvoiceValueText: t.totalInvoiceValueText,
-                  recommendation: t.recommendation,
-                },
-              };
-            }),
-          );
+          const triageNotifs: UINotification[] = triage.map((t) => {
+            const hit = resolveVendorByDisplayName(vendors, t.vendorName);
+            const displayVendorName = hit?.company_name ?? t.vendorName;
+            return {
+              id: t.id,
+              user_id: user!.id,
+              request_id: null,
+              message: `[P2P Triage] ${t.message}`,
+              is_read: false,
+              created_at: t.createdAt,
+              vendor_href: hit ? `/vendors/${hit.vendor_id}` : "/vendors",
+              triage_meta: {
+                checkLabel: t.checkLabel,
+                invoiceNumber: t.invoiceNumber,
+                vendorName: displayVendorName,
+                materialName: t.materialName,
+                totalInvoiceValueText: t.totalInvoiceValueText,
+                recommendation: t.recommendation,
+              },
+            };
+          });
           const merged = applyReadOverrides([...data, ...triageNotifs]).sort(
             (a, b) =>
               new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),

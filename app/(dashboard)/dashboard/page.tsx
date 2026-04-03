@@ -41,6 +41,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { DOMAIN } from "@/lib/domain.config";
 import { useAuth } from "@/lib/auth-context";
@@ -49,8 +50,11 @@ import {
   listKognitosRunRowsFromDb,
   findVendorByDisplayName,
   findVendorForMaterialName,
+  listVendors,
+  resolveVendorByDisplayName,
   type KognitosRunRow,
 } from "@/lib/api";
+import type { Vendor } from "@/lib/types";
 import {
   buildP2pTriageAlerts,
   TRIAGE_CHECK_ORDER,
@@ -100,8 +104,10 @@ const CHART_BAR = {
   failRow: "bg-[#636d02]",
 } as const;
 
-const RUN_TABLE_PAGE_SIZE = 20;
+const RUN_TABLE_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
 type TimePeriod = "last_90_days" | "year_to_date" | "last_year" | "all_time";
+/** Completed checks table: payment recommendation from run summary (same as vendor Invoices Processed/Pending). */
+type CompletedPaymentFilter = "pending" | "processed";
 
 function getPeriodStart(period: TimePeriod, now = new Date()): Date | null {
   const d = new Date(now);
@@ -210,6 +216,10 @@ export default function DashboardPage() {
   const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
   const [completedPage, setCompletedPage] = useState(0);
   const [incompletePage, setIncompletePage] = useState(0);
+  const [completedRowsPerPage, setCompletedRowsPerPage] = useState(10);
+  const [incompleteRowsPerPage, setIncompleteRowsPerPage] = useState(10);
+  const [completedPaymentFilter, setCompletedPaymentFilter] =
+    useState<CompletedPaymentFilter>("pending");
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("all_time");
   const [triageAlerts, setTriageAlerts] = useState<
     Array<TriageAlert & { vendorHref: string; is_read: boolean }>
@@ -250,6 +260,29 @@ export default function DashboardPage() {
       .filter((x): x is NonNullable<typeof x> => x != null);
     const summaries = filteredRunRows.map((row) => buildRunSummaryFromRun(row.run));
     return aggregateResults(parsed, summaries);
+  }, [filteredRunRows]);
+
+  /** Only runs with a completed 4-way check (extractable match); processed % is payment-approved within this set. */
+  const completedChecksInvoiceStats = useMemo(() => {
+    let withCompletedChecks = 0;
+    let processedCount = 0;
+    for (const row of filteredRunRows) {
+      if (extractFourWayMatchFromRun(row.run) == null) continue;
+      withCompletedChecks += 1;
+      if (buildRunSummaryFromRun(row.run).paymentApproved === true) {
+        processedCount += 1;
+      }
+    }
+    const pendingCount = withCompletedChecks - processedCount;
+    return {
+      total: withCompletedChecks,
+      processedCount,
+      pendingCount,
+      processedPct:
+        withCompletedChecks > 0
+          ? Math.round((100 * processedCount) / withCompletedChecks)
+          : 0,
+    };
   }, [filteredRunRows]);
 
   const { completedRunRows, incompleteRunRows } = useMemo(() => {
@@ -438,21 +471,21 @@ export default function DashboardPage() {
       if (!user) return;
       const alerts = buildP2pTriageAlerts(filteredRunRows);
       const overrides = getReadOverrides();
-      const withLinks = await Promise.all(
-        alerts.map(async (a) => {
-          try {
-            const hit = await findVendorByDisplayName(a.vendorName);
-            return {
-              ...a,
-              vendorName: hit?.company_name ?? a.vendorName,
-              vendorHref: hit ? `/vendors/${hit.vendor_id}` : "/vendors",
-              is_read: overrides[a.id] ?? false,
-            };
-          } catch {
-            return { ...a, vendorHref: "/vendors", is_read: overrides[a.id] ?? false };
-          }
-        }),
-      );
+      let vendors: Vendor[] = [];
+      try {
+        vendors = await listVendors();
+      } catch {
+        /* banner still works with fallback links */
+      }
+      const withLinks = alerts.map((a) => {
+        const hit = resolveVendorByDisplayName(vendors, a.vendorName);
+        return {
+          ...a,
+          vendorName: hit?.company_name ?? a.vendorName,
+          vendorHref: hit ? `/vendors/${hit.vendor_id}` : "/vendors",
+          is_read: overrides[a.id] ?? false,
+        };
+      });
       if (!cancelled) setTriageAlerts(withLinks);
     };
     loadTriage();
@@ -461,49 +494,82 @@ export default function DashboardPage() {
     };
   }, [filteredRunRows, user]);
 
+  const completedRunRowsPaymentFiltered = useMemo(() => {
+    return completedRunRows.filter((row) => {
+      const runId = runIdFromName(row.run.name);
+      const enriched = p2pForWidgets.runs?.find((r) => r.runId === runId);
+      const processedForPayment = enriched?.paymentApproved === true;
+      if (completedPaymentFilter === "processed") return processedForPayment;
+      return !processedForPayment;
+    });
+  }, [completedRunRows, p2pForWidgets, completedPaymentFilter]);
+
   const completedLastPage = useMemo(
     () =>
       Math.max(
         0,
-        Math.ceil(completedRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
+        Math.ceil(
+          completedRunRowsPaymentFiltered.length / completedRowsPerPage,
+        ) - 1,
       ),
-    [completedRunRows.length],
+    [completedRunRowsPaymentFiltered.length, completedRowsPerPage],
   );
 
   const completedPagedRows = useMemo(() => {
-    const start = completedPage * RUN_TABLE_PAGE_SIZE;
-    return completedRunRows.slice(start, start + RUN_TABLE_PAGE_SIZE);
-  }, [completedRunRows, completedPage]);
+    const start = completedPage * completedRowsPerPage;
+    return completedRunRowsPaymentFiltered.slice(
+      start,
+      start + completedRowsPerPage,
+    );
+  }, [
+    completedRunRowsPaymentFiltered,
+    completedPage,
+    completedRowsPerPage,
+  ]);
 
   const incompleteLastPage = useMemo(
     () =>
       Math.max(
         0,
-        Math.ceil(incompleteRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
+        Math.ceil(incompleteRunRows.length / incompleteRowsPerPage) - 1,
       ),
-    [incompleteRunRows.length],
+    [incompleteRunRows.length, incompleteRowsPerPage],
   );
 
   const incompletePagedRows = useMemo(() => {
-    const start = incompletePage * RUN_TABLE_PAGE_SIZE;
-    return incompleteRunRows.slice(start, start + RUN_TABLE_PAGE_SIZE);
-  }, [incompleteRunRows, incompletePage]);
+    const start = incompletePage * incompleteRowsPerPage;
+    return incompleteRunRows.slice(start, start + incompleteRowsPerPage);
+  }, [incompleteRunRows, incompletePage, incompleteRowsPerPage]);
 
   useEffect(() => {
     const maxPage = Math.max(
       0,
-      Math.ceil(completedRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
+      Math.ceil(
+        completedRunRowsPaymentFiltered.length / completedRowsPerPage,
+      ) - 1,
     );
     if (completedPage > maxPage) setCompletedPage(maxPage);
-  }, [completedRunRows.length, completedPage]);
+  }, [
+    completedRunRowsPaymentFiltered.length,
+    completedPage,
+    completedRowsPerPage,
+  ]);
 
   useEffect(() => {
     const maxPage = Math.max(
       0,
-      Math.ceil(incompleteRunRows.length / RUN_TABLE_PAGE_SIZE) - 1,
+      Math.ceil(incompleteRunRows.length / incompleteRowsPerPage) - 1,
     );
     if (incompletePage > maxPage) setIncompletePage(maxPage);
-  }, [incompleteRunRows.length, incompletePage]);
+  }, [incompleteRunRows.length, incompletePage, incompleteRowsPerPage]);
+
+  useEffect(() => {
+    setCompletedPage(0);
+  }, [completedRowsPerPage]);
+
+  useEffect(() => {
+    setIncompletePage(0);
+  }, [incompleteRowsPerPage]);
 
   return (
     <div className="space-y-6">
@@ -607,13 +673,7 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           )}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <FourWayMatchKpiCard
-              label="Invoices Received"
-              value={p2pForWidgets.runsAnalyzed.toString()}
-              icon={FileCheck}
-              description="Completed invoice data checks"
-            />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FourWayMatchKpiCard
               label="Top Vendor"
               value={topVendorDisplayName ?? topVendor?.vendor ?? "—"}
@@ -637,7 +697,7 @@ export default function DashboardPage() {
               }
             />
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FourWayMatchKpiCard
               label="Total Approved Payments"
               value={currencyFmt.format(p2pForWidgets.totalApprovedValue)}
@@ -650,19 +710,14 @@ export default function DashboardPage() {
               description={`${p2pForWidgets.paymentRejectCount} reject or hold`}
               icon={ThumbsDown}
             />
-            <FourWayMatchKpiCard
-              label="Total Pending Invoices"
-              value={awaitingGuidanceDisplay.toString()}
-              description="Invoices pending review"
-              icon={Clock}
-            />
           </div>
 
           <Card className="rounded-xl">
             <CardHeader>
               <CardTitle>Validation Health</CardTitle>
               <CardDescription>
-                Success rate and failure impact by validation check in one view
+                Payment processing vs pending for completed checks; per-check
+                pass rates below
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -670,41 +725,49 @@ export default function DashboardPage() {
                 <div className={`flex h-7 w-full overflow-hidden p-0.5 ${CHART_BAR.track}`}>
                   <div
                     className={`grid min-w-0 place-items-center text-[11px] font-semibold text-[#374200] transition-[width] duration-300 ease-out ${CHART_BAR.pass} ${
-                      validationHealth.overallPass <= 0
+                      completedChecksInvoiceStats.processedCount <= 0
                         ? "hidden"
-                        : validationHealth.overallFail <= 0
+                        : completedChecksInvoiceStats.pendingCount <= 0
                           ? "rounded-full"
                           : "rounded-l-full"
                     }`}
                     style={{
-                      width: `${Math.max(0, Math.min(100, validationHealth.overallPassRate))}%`,
+                      width: `${Math.max(0, Math.min(100, completedChecksInvoiceStats.processedPct))}%`,
                     }}
                   >
-                    {validationHealth.overallPass > 0
-                      ? `${validationHealth.overallPass} pass`
+                    {completedChecksInvoiceStats.processedCount > 0
+                      ? `${completedChecksInvoiceStats.processedCount} processed`
                       : ""}
                   </div>
                   <div
                     className={`grid min-w-0 place-items-center text-[11px] font-semibold text-[#3f4600] transition-[width] duration-300 ease-out ${CHART_BAR.fail} ${
-                      validationHealth.overallFail <= 0
+                      completedChecksInvoiceStats.pendingCount <= 0
                         ? "hidden"
-                        : validationHealth.overallPass <= 0
+                        : completedChecksInvoiceStats.processedCount <= 0
                           ? "rounded-full"
                           : "rounded-r-full"
                     }`}
                     style={{
-                      width: `${Math.max(0, Math.min(100, 100 - validationHealth.overallPassRate))}%`,
+                      width: `${Math.max(
+                        0,
+                        Math.min(
+                          100,
+                          100 - completedChecksInvoiceStats.processedPct,
+                        ),
+                      )}%`,
                     }}
                   >
-                    {validationHealth.overallFail > 0
-                      ? `${validationHealth.overallFail} fail`
+                    {completedChecksInvoiceStats.pendingCount > 0
+                      ? `${completedChecksInvoiceStats.pendingCount} pending`
                       : ""}
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {validationHealth.overallPassRate}% pass rate •{" "}
-                  {validationHealth.totalFailedChecks} failed checks across all
-                  validations
+                  {completedChecksInvoiceStats.total}{" "}
+                  {completedChecksInvoiceStats.total === 1
+                    ? "Invoice"
+                    : "Invoices"}{" "}
+                  • {completedChecksInvoiceStats.processedPct}% processed
                 </p>
               </div>
 
@@ -768,6 +831,24 @@ export default function DashboardPage() {
               </p>
             ) : (
               <div className="space-y-4">
+                <Tabs
+                  value={completedPaymentFilter}
+                  onValueChange={(v) => {
+                    setCompletedPaymentFilter(v as CompletedPaymentFilter);
+                    setCompletedPage(0);
+                  }}
+                >
+                  <TabsList>
+                    <TabsTrigger value="pending">Pending</TabsTrigger>
+                    <TabsTrigger value="processed">Processed</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                {completedRunRowsPaymentFiltered.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No completed checks in this view.
+                  </p>
+                ) : (
+                  <>
                 <div className="max-w-full overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -885,17 +966,38 @@ export default function DashboardPage() {
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
                   <p className="text-sm text-muted-foreground">
                     Showing{" "}
-                    {completedRunRows.length === 0
+                    {completedRunRowsPaymentFiltered.length === 0
                       ? 0
-                      : completedPage * RUN_TABLE_PAGE_SIZE + 1}
+                      : completedPage * completedRowsPerPage + 1}
                     –
                     {Math.min(
-                      (completedPage + 1) * RUN_TABLE_PAGE_SIZE,
-                      completedRunRows.length,
+                      (completedPage + 1) * completedRowsPerPage,
+                      completedRunRowsPaymentFiltered.length,
                     )}{" "}
-                    of {completedRunRows.length}
+                    of {completedRunRowsPaymentFiltered.length}
                   </p>
-                  <div className="flex flex-wrap items-center gap-1">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Rows</span>
+                      <Select
+                        value={String(completedRowsPerPage)}
+                        onValueChange={(v) =>
+                          setCompletedRowsPerPage(Number(v))
+                        }
+                      >
+                        <SelectTrigger size="sm" className="w-[70px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {RUN_TABLE_PAGE_SIZE_OPTIONS.map((size) => (
+                            <SelectItem key={size} value={String(size)}>
+                              {size}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1">
                     <Button
                       type="button"
                       variant="outline"
@@ -946,8 +1048,11 @@ export default function DashboardPage() {
                     >
                       <ChevronLast className="size-4" />
                     </Button>
+                    </div>
                   </div>
                 </div>
+                  </>
+                )}
               </div>
             )}
           </CardContent>
@@ -1032,15 +1137,36 @@ export default function DashboardPage() {
                     Showing{" "}
                     {incompleteRunRows.length === 0
                       ? 0
-                      : incompletePage * RUN_TABLE_PAGE_SIZE + 1}
+                      : incompletePage * incompleteRowsPerPage + 1}
                     –
                     {Math.min(
-                      (incompletePage + 1) * RUN_TABLE_PAGE_SIZE,
+                      (incompletePage + 1) * incompleteRowsPerPage,
                       incompleteRunRows.length,
                     )}{" "}
                     of {incompleteRunRows.length}
                   </p>
-                  <div className="flex flex-wrap items-center gap-1">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Rows</span>
+                      <Select
+                        value={String(incompleteRowsPerPage)}
+                        onValueChange={(v) =>
+                          setIncompleteRowsPerPage(Number(v))
+                        }
+                      >
+                        <SelectTrigger size="sm" className="w-[70px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {RUN_TABLE_PAGE_SIZE_OPTIONS.map((size) => (
+                            <SelectItem key={size} value={String(size)}>
+                              {size}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1">
                     <Button
                       type="button"
                       variant="outline"
@@ -1091,6 +1217,7 @@ export default function DashboardPage() {
                     >
                       <ChevronLast className="size-4" />
                     </Button>
+                    </div>
                   </div>
                 </div>
               </div>

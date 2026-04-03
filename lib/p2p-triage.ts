@@ -37,23 +37,21 @@ const CHECK_CONFIG: Record<
 > = {
   documentMatch: {
     label: "Document Match",
-    recommendation:
-      "Log in and contact the vendor to review and make sure the PO number is correct.",
+    recommendation: "Review and correct the PO number.",
   },
   quantityAndUnitMatch: {
     label: "Quantity and Unit Match",
     recommendation:
-      "Contact logistics to make sure the amount received was counted correctly.",
+      "Verify with logistics that the amount received was counted correctly.",
   },
   valueMatch: {
     label: "Value Match",
-    recommendation:
-      "Contact the vendor to review pricing lists update documentation and re-submit Invoice",
+    recommendation: "Review pricing lists and update documentation.",
   },
   coaValidation: {
     label: "COA Validation",
     recommendation:
-      "Contact the vendor representative to review purity specifications and confirm compliance.",
+      "Review purity specifications and confirm compliance.",
   },
 };
 

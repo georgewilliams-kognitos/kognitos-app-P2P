@@ -259,13 +259,18 @@ function normalizeLooseText(value: string) {
     .trim();
 }
 
-export async function findVendorByDisplayName(
+/**
+ * Match extracted vendor text to a master row using the same rules as
+ * {@link findVendorByDisplayName}, without fetching. Pass the result of {@link getAllVendors}
+ * once per batch (e.g. a single {@code listVendors()} call on the client).
+ */
+export function resolveVendorByDisplayName(
+  vendors: Vendor[],
   displayName: string,
-): Promise<Vendor | null> {
+): Vendor | null {
   const trimmed = displayName.trim();
   if (!trimmed) return null;
 
-  const vendors = await getAllVendors();
   const byVendorId = vendors.find((v) => v.vendor_id === trimmed);
   if (byVendorId) return byVendorId;
 
@@ -283,6 +288,13 @@ export async function findVendorByDisplayName(
   });
 
   return fuzzy ?? null;
+}
+
+export async function findVendorByDisplayName(
+  displayName: string,
+): Promise<Vendor | null> {
+  const vendors = await getAllVendors();
+  return resolveVendorByDisplayName(vendors, displayName);
 }
 
 export async function findVendorForMaterialName(

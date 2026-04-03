@@ -7,8 +7,9 @@ import type { ChatConfig } from "./types";
  * and example questions so Claude can answer accurately.
  */
 export const APP_CHAT_CONFIG: ChatConfig = {
-  appName: "WorkflowApp",
-  appDescription: "Workflow Management Platform for approval requests and task tracking",
+  appName: "P2P App",
+  appDescription:
+    "Procure-to-pay (P2P) operations for Accounts Payable: four-way invoice validation, vendor insights, payment readiness, and triage powered by Kognitos automation",
   domainContext: `
 This is a workflow management application. Here is what each table represents:
 

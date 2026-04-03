@@ -4,6 +4,7 @@ import {
   getVendorById as _getVendorById,
   getProductsForVendor as _getProductsForVendor,
   findVendorByDisplayName as _findVendorByDisplayName,
+  resolveVendorByDisplayName as _resolveVendorByDisplayName,
   findVendorForMaterialName as _findVendorForMaterialName,
   listVendorInvoicesForVendor as _listVendorInvoicesForVendor,
 } from "@/lib/db";
@@ -26,6 +27,13 @@ export async function findVendorByDisplayName(
   displayName: string,
 ): Promise<Vendor | null> {
   return _findVendorByDisplayName(displayName);
+}
+
+export function resolveVendorByDisplayName(
+  vendors: Vendor[],
+  displayName: string,
+): Vendor | null {
+  return _resolveVendorByDisplayName(vendors, displayName);
 }
 
 export async function findVendorForMaterialName(
