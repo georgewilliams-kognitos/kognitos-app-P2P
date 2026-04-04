@@ -5,12 +5,14 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Check,
+  ChevronDown,
   ChevronFirst,
   ChevronLast,
   ChevronLeft,
   ChevronRight,
   Download,
   ExternalLink,
+  Lock,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +32,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -79,7 +87,31 @@ import {
 
 const RUN_TABLE_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
 
-type CompletedPaymentFilter = "pending" | "processed";
+type CompletedPaymentFilter = "pending" | "processed" | "all";
+
+function vendorFilterKeyForRun(
+  run: KognitosRunRow["run"],
+  vendorsList: Vendor[],
+): string {
+  const extracted = extractVendorFromRun(run);
+  const resolved = resolveVendorByDisplayName(vendorsList, extracted ?? "");
+  if (resolved) return `id:${resolved.vendor_id}`;
+  const t = extracted?.trim();
+  if (t) return `name:${t.toLowerCase()}`;
+  return "__none__";
+}
+
+function rowMatchesLockedVendor(
+  row: KognitosRunRow,
+  vendorsList: Vendor[],
+  lockedVendorId: string,
+): boolean {
+  const resolved = resolveVendorByDisplayName(
+    vendorsList,
+    extractVendorFromRun(row.run) ?? "",
+  );
+  return resolved?.vendor_id === lockedVendorId;
+}
 
 const stateBadgeVariant: Record<
   RunStateLabel,
@@ -111,15 +143,18 @@ function paymentFilterFromSearchParams(
   params: URLSearchParams | null,
 ): CompletedPaymentFilter {
   const p = params?.get("payment");
-  if (p === "processed" || p === "pending") return p;
+  if (p === "processed" || p === "pending" || p === "all") return p;
   return "pending";
 }
 
 export function InvoicesTablesSection({
   showInvoicesOnHold = true,
+  lockedVendorId,
 }: {
   /** When false, only the “Invoices Analyzed” card is shown (e.g. Dashboard). */
   showInvoicesOnHold?: boolean;
+  /** When set, rows are limited to this vendor and the vendor picker is hidden (e.g. vendor detail page). */
+  lockedVendorId?: string;
 } = {}) {
   const searchParams = useSearchParams();
   const { timePeriod } = useSharedTimePeriod();
@@ -144,6 +179,8 @@ export function InvoicesTablesSection({
   }, [searchParams]);
   const [invoicePreview, setInvoicePreview] =
     useState<DashboardInvoicePreview | null>(null);
+  /** Empty = all vendors (no filter). */
+  const [selectedVendorKeys, setSelectedVendorKeys] = useState<string[]>([]);
 
   const loadRuns = useCallback(() => {
     listKognitosRunRowsFromDb()
@@ -198,35 +235,89 @@ export function InvoicesTablesSection({
     return { completedRunRows: completed, incompleteRunRows: incomplete };
   }, [filteredRunRows, p2pForWidgets]);
 
-  const completedRunRowsPaymentFiltered = useMemo(() => {
+  const analyzedVendorOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of completedRunRows) {
+      const key = vendorFilterKeyForRun(row.run, vendors);
+      if (map.has(key)) continue;
+      const extracted = extractVendorFromRun(row.run);
+      const resolved = resolveVendorByDisplayName(vendors, extracted ?? "");
+      const label =
+        resolved?.company_name ??
+        (extracted?.trim() ? extracted.trim() : "Unknown / no vendor");
+      map.set(key, label);
+    }
+    return Array.from(map.entries())
+      .map(([key, label]) => ({ key, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [completedRunRows, vendors]);
+
+  useEffect(() => {
+    if (lockedVendorId) return;
+    const valid = new Set(analyzedVendorOptions.map((o) => o.key));
+    setSelectedVendorKeys((prev) => {
+      const next = prev.filter((k) => valid.has(k));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [analyzedVendorOptions, lockedVendorId]);
+
+  const completedRunRowsByPayment = useMemo(() => {
     return completedRunRows.filter((row) => {
       const rid = runIdFromName(row.run.name);
       const enriched = p2pForWidgets.runs?.find((r) => r.runId === rid);
       const processedForPayment = enriched?.paymentApproved === true;
+      if (completedPaymentFilter === "all") return true;
       if (completedPaymentFilter === "processed") return processedForPayment;
       return !processedForPayment;
     });
   }, [completedRunRows, p2pForWidgets, completedPaymentFilter]);
+
+  const completedRunRowsFiltered = useMemo(() => {
+    let base = completedRunRowsByPayment;
+    if (lockedVendorId) {
+      base = base.filter((row) =>
+        rowMatchesLockedVendor(row, vendors, lockedVendorId),
+      );
+    } else if (selectedVendorKeys.length > 0) {
+      const sel = new Set(selectedVendorKeys);
+      base = base.filter((row) =>
+        sel.has(vendorFilterKeyForRun(row.run, vendors)),
+      );
+    }
+    return base;
+  }, [
+    completedRunRowsByPayment,
+    selectedVendorKeys,
+    vendors,
+    lockedVendorId,
+  ]);
+
+  const incompleteRunRowsForView = useMemo(() => {
+    if (!lockedVendorId) return incompleteRunRows;
+    return incompleteRunRows.filter((row) =>
+      rowMatchesLockedVendor(row, vendors, lockedVendorId),
+    );
+  }, [incompleteRunRows, lockedVendorId, vendors]);
 
   const completedLastPage = useMemo(
     () =>
       Math.max(
         0,
         Math.ceil(
-          completedRunRowsPaymentFiltered.length / completedRowsPerPage,
+          completedRunRowsFiltered.length / completedRowsPerPage,
         ) - 1,
       ),
-    [completedRunRowsPaymentFiltered.length, completedRowsPerPage],
+    [completedRunRowsFiltered.length, completedRowsPerPage],
   );
 
   const completedPagedRows = useMemo(() => {
     const start = completedPage * completedRowsPerPage;
-    return completedRunRowsPaymentFiltered.slice(
+    return completedRunRowsFiltered.slice(
       start,
       start + completedRowsPerPage,
     );
   }, [
-    completedRunRowsPaymentFiltered,
+    completedRunRowsFiltered,
     completedPage,
     completedRowsPerPage,
   ]);
@@ -235,26 +326,29 @@ export function InvoicesTablesSection({
     () =>
       Math.max(
         0,
-        Math.ceil(incompleteRunRows.length / incompleteRowsPerPage) - 1,
+        Math.ceil(incompleteRunRowsForView.length / incompleteRowsPerPage) - 1,
       ),
-    [incompleteRunRows.length, incompleteRowsPerPage],
+    [incompleteRunRowsForView.length, incompleteRowsPerPage],
   );
 
   const incompletePagedRows = useMemo(() => {
     const start = incompletePage * incompleteRowsPerPage;
-    return incompleteRunRows.slice(start, start + incompleteRowsPerPage);
-  }, [incompleteRunRows, incompletePage, incompleteRowsPerPage]);
+    return incompleteRunRowsForView.slice(
+      start,
+      start + incompleteRowsPerPage,
+    );
+  }, [incompleteRunRowsForView, incompletePage, incompleteRowsPerPage]);
 
   useEffect(() => {
     const maxPage = Math.max(
       0,
       Math.ceil(
-        completedRunRowsPaymentFiltered.length / completedRowsPerPage,
+        completedRunRowsFiltered.length / completedRowsPerPage,
       ) - 1,
     );
     if (completedPage > maxPage) setCompletedPage(maxPage);
   }, [
-    completedRunRowsPaymentFiltered.length,
+    completedRunRowsFiltered.length,
     completedPage,
     completedRowsPerPage,
   ]);
@@ -262,14 +356,22 @@ export function InvoicesTablesSection({
   useEffect(() => {
     const maxPage = Math.max(
       0,
-      Math.ceil(incompleteRunRows.length / incompleteRowsPerPage) - 1,
+      Math.ceil(incompleteRunRowsForView.length / incompleteRowsPerPage) - 1,
     );
     if (incompletePage > maxPage) setIncompletePage(maxPage);
-  }, [incompleteRunRows.length, incompletePage, incompleteRowsPerPage]);
+  }, [
+    incompleteRunRowsForView.length,
+    incompletePage,
+    incompleteRowsPerPage,
+  ]);
 
   useEffect(() => {
     setCompletedPage(0);
   }, [completedRowsPerPage]);
+
+  useEffect(() => {
+    setCompletedPage(0);
+  }, [completedPaymentFilter, selectedVendorKeys.join("|"), lockedVendorId]);
 
   useEffect(() => {
     setIncompletePage(0);
@@ -292,19 +394,108 @@ export function InvoicesTablesSection({
             </p>
           ) : (
             <div className="space-y-4">
-              <Tabs
-                value={completedPaymentFilter}
-                onValueChange={(v) => {
-                  setCompletedPaymentFilter(v as "pending" | "processed");
-                  setCompletedPage(0);
-                }}
-              >
-                <TabsList>
-                  <TabsTrigger value="pending">Pending</TabsTrigger>
-                  <TabsTrigger value="processed">Processed</TabsTrigger>
-                </TabsList>
-              </Tabs>
-              {completedRunRowsPaymentFiltered.length === 0 ? (
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <Tabs
+                  value={completedPaymentFilter}
+                  onValueChange={(v) => {
+                    setCompletedPaymentFilter(v as CompletedPaymentFilter);
+                    setCompletedPage(0);
+                  }}
+                >
+                  <TabsList>
+                    <TabsTrigger value="pending">Pending</TabsTrigger>
+                    <TabsTrigger value="processed">Processed</TabsTrigger>
+                    <TabsTrigger value="all">All</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                {lockedVendorId ? (
+                  <div
+                    className="flex max-w-full min-w-0 items-center gap-2 rounded-md border border-input bg-muted/30 px-3 py-2 text-sm"
+                    title="Vendor filter is fixed on this page"
+                  >
+                    <Lock
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <span className="min-w-0 truncate font-medium text-foreground">
+                      {vendors.find((v) => v.vendor_id === lockedVendorId)
+                        ?.company_name ?? lockedVendorId}
+                    </span>
+                  </div>
+                ) : (
+                  analyzedVendorOptions.length > 0 && (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-w-[10rem] justify-between gap-2 font-normal"
+                      >
+                        <span className="truncate">
+                          {selectedVendorKeys.length === 0
+                            ? "All vendors"
+                            : selectedVendorKeys.length === 1
+                              ? (analyzedVendorOptions.find(
+                                  (o) => o.key === selectedVendorKeys[0],
+                                )?.label ?? "Vendors")
+                              : `${selectedVendorKeys.length} vendors`}
+                        </span>
+                        <ChevronDown className="size-4 shrink-0 opacity-60" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80 p-0" align="end">
+                      <div className="border-b px-3 py-2">
+                        <p className="text-sm font-medium">Vendor</p>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto p-2">
+                        <div className="space-y-1">
+                          {analyzedVendorOptions.map((opt) => (
+                            <label
+                              key={opt.key}
+                              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50"
+                            >
+                              <Checkbox
+                                checked={selectedVendorKeys.includes(opt.key)}
+                                onCheckedChange={(checked) => {
+                                  setSelectedVendorKeys((prev) => {
+                                    if (checked === true) {
+                                      return prev.includes(opt.key)
+                                        ? prev
+                                        : [...prev, opt.key];
+                                    }
+                                    return prev.filter((k) => k !== opt.key);
+                                  });
+                                  setCompletedPage(0);
+                                }}
+                              />
+                              <span className="leading-snug">{opt.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      {selectedVendorKeys.length > 0 && (
+                        <div className="border-t px-2 py-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="w-full"
+                            onClick={() => {
+                              setSelectedVendorKeys([]);
+                              setCompletedPage(0);
+                            }}
+                          >
+                            Clear selection
+                          </Button>
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                  )
+                )}
+              </div>
+              {completedRunRowsFiltered.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No completed checks in this view.
                 </p>
@@ -316,7 +507,7 @@ export function InvoicesTablesSection({
                         <TableRow>
                           <TableHead>Vendor Name</TableHead>
                           <TableHead>Invoice Number</TableHead>
-                          <TableHead>PO Number</TableHead>
+                          <TableHead>Value</TableHead>
                           <TableHead
                             className="w-11 min-w-[2.75rem] text-center text-xs font-medium uppercase"
                             title="Document Match"
@@ -347,7 +538,6 @@ export function InvoicesTablesSection({
                           >
                             PAY
                           </TableHead>
-                          <TableHead className="text-right">Value</TableHead>
                           <TableHead className="text-right">Completed</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -385,6 +575,7 @@ export function InvoicesTablesSection({
                               ? formatRunTime(
                                   enriched?.completedTime ??
                                     getCompletedTimeFromRun(run),
+                                  { omitSeconds: true },
                                 )
                               : "—";
                           const href = kognitosRunOpenHref(run.name);
@@ -424,7 +615,16 @@ export function InvoicesTablesSection({
                                   invoiceLabel
                                 )}
                               </TableCell>
-                              <TableCell>{enriched?.poNumber ?? "—"}</TableCell>
+                              <TableCell>
+                                {enriched?.poTotalValue != null
+                                  ? new Intl.NumberFormat("en-US", {
+                                      style: "currency",
+                                      currency: "USD",
+                                      minimumFractionDigits: 0,
+                                      maximumFractionDigits: 2,
+                                    }).format(enriched.poTotalValue)
+                                  : "—"}
+                              </TableCell>
                               <TableCell className="text-center">
                                 <CheckOrCross
                                   pass={enriched?.documentMatch === "PASS"}
@@ -453,16 +653,6 @@ export function InvoicesTablesSection({
                                 />
                               </TableCell>
                               <TableCell className="text-right text-muted-foreground">
-                                {enriched?.poTotalValue != null
-                                  ? new Intl.NumberFormat("en-US", {
-                                      style: "currency",
-                                      currency: "USD",
-                                      minimumFractionDigits: 0,
-                                      maximumFractionDigits: 2,
-                                    }).format(enriched.poTotalValue)
-                                  : "—"}
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground">
                                 {state === "completed" ? (
                                   <a
                                     href={href}
@@ -485,15 +675,15 @@ export function InvoicesTablesSection({
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
                     <p className="text-sm text-muted-foreground">
                       Showing{" "}
-                      {completedRunRowsPaymentFiltered.length === 0
+                      {completedRunRowsFiltered.length === 0
                         ? 0
                         : completedPage * completedRowsPerPage + 1}
                       –
                       {Math.min(
                         (completedPage + 1) * completedRowsPerPage,
-                        completedRunRowsPaymentFiltered.length,
+                        completedRunRowsFiltered.length,
                       )}{" "}
-                      of {completedRunRowsPaymentFiltered.length}
+                      of {completedRunRowsFiltered.length}
                     </p>
                     <div className="flex flex-wrap items-center gap-4">
                       <div className="flex items-center gap-2">
@@ -588,7 +778,7 @@ export function InvoicesTablesSection({
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {incompleteRunRows.length === 0 ? (
+            {incompleteRunRowsForView.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
                 No incomplete runs.
               </p>
@@ -653,15 +843,15 @@ export function InvoicesTablesSection({
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
                   <p className="text-sm text-muted-foreground">
                     Showing{" "}
-                    {incompleteRunRows.length === 0
+                    {incompleteRunRowsForView.length === 0
                       ? 0
                       : incompletePage * incompleteRowsPerPage + 1}
                     –
                     {Math.min(
                       (incompletePage + 1) * incompleteRowsPerPage,
-                      incompleteRunRows.length,
+                      incompleteRunRowsForView.length,
                     )}{" "}
-                    of {incompleteRunRows.length}
+                    of {incompleteRunRowsForView.length}
                   </p>
                   <div className="flex flex-wrap items-center gap-4">
                     <div className="flex items-center gap-2">

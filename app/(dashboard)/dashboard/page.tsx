@@ -11,7 +11,6 @@ import Link from "next/link";
 import {
   Clock,
   Building2,
-  Zap,
   FileCheck,
   ThumbsUp,
   ExternalLink,
@@ -27,7 +26,6 @@ import { InvoicesTablesSection } from "@/components/invoices/invoices-tables-sec
 import { TimePeriodSelect } from "@/components/dashboard/time-period-select";
 import { useSharedTimePeriod } from "@/contexts/time-period-context";
 
-import { DOMAIN } from "@/lib/domain.config";
 import { useAuth } from "@/lib/auth-context";
 import {
   findVendorByDisplayName,
@@ -61,10 +59,7 @@ import {
   topMaterialFromRuns,
   topVendorStatsFromRuns,
 } from "@/lib/kognitos/dashboard-metrics";
-import {
-  getRunStateLabel,
-  isCompletedRun,
-} from "@/lib/kognitos/run-dashboard";
+import { isCompletedRun } from "@/lib/kognitos/run-dashboard";
 import { inSelectedPeriod, type TimePeriod } from "@/lib/dashboard-time-period";
 
 /** Bar chart fills using the approved yellow/olive palette (no gradients). */
@@ -75,8 +70,6 @@ const CHART_BAR = {
     "rounded-xl border border-border/70 bg-muted/45 dark:bg-muted/50",
   // 1st shade
   pass: "bg-[#cfdb4c]",
-  // 3rd shade
-  fail: "bg-[#b7c435]",
   // 2nd shade
   passRow: "bg-[#c3d041]",
   // 5th shade (reserved)
@@ -110,18 +103,21 @@ const PENDING_FAIL_SEGMENTS = [
 /** Wider threshold at 13px label size so “proc.” only when truly squeezed. */
 const PROCESSED_LABEL_NARROW_PX = 94;
 
-/** Softer ramp: same light end (#8a942f); third band lifted vs fourth for clearer VAL vs COA. */
+/**
+ * Shifted-from-generic ramp (DOC→QTY→VAL→COA). COA uses a darker olive than VAL so the
+ * last two bands don’t read as the same hue (#7f8a2e vs #6c7828).
+ */
 const PENDING_FAIL_COLORS = [
+  "bg-[#b7c435]",
   "bg-[#8a942f]",
   "bg-[#7f8a2e]",
-  "bg-[#7c882f]",
   "bg-[#6c7828]",
 ] as const;
 
-/** Dark text on DOC/QTY; light text on VAL/COA (no drop-shadow — it read as a seam between segments). */
+/** Label colors for contrast (VAL/COA mid–dark olives — light text). */
 const PENDING_FAIL_LABEL_TEXT = [
+  "text-[#3f4600]",
   "text-[#1f2908]",
-  "text-[#1d2608]",
   "text-[#f6faef]",
   "text-[#f6faef]",
 ] as const;
@@ -237,7 +233,6 @@ function ValidationProcessedSegment({
 export default function DashboardPage() {
   const { user } = useAuth();
   const { timePeriod } = useSharedTimePeriod();
-  const [insights, setInsights] = useState<KognitosInsights | null>(null);
   const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [triageAlerts, setTriageAlerts] = useState<
@@ -245,16 +240,12 @@ export default function DashboardPage() {
   >([]);
 
   function loadDashboardData() {
-    Promise.all([
-      getKognitosInsightsCacheFromDb(),
-      listKognitosRunRowsFromDb().catch((err) => {
+    listKognitosRunRowsFromDb()
+      .catch((err) => {
         console.error("listKognitosRunRowsFromDb:", err);
         return [] as KognitosRunRow[];
-      }),
-    ]).then(([cache, rows]) => {
-      setInsights(cache.insights);
-      setRunRows(rows);
-    });
+      })
+      .then(setRunRows);
   }
 
   useEffect(() => {
@@ -326,27 +317,6 @@ export default function DashboardPage() {
           : 0,
     };
   }, [filteredRunRows]);
-
-  const totalRunsDisplay = useMemo(
-    () => filteredRunRows.length,
-    [filteredRunRows.length],
-  );
-
-  const stpDisplay = useMemo(() => {
-    if (filteredRunRows.length === 0) return 0;
-    return Math.round((completedRunRows.length / filteredRunRows.length) * 100);
-  }, [filteredRunRows.length, completedRunRows.length]);
-
-  const awaitingGuidanceDisplay = useMemo(() => {
-    return filteredRunRows.filter(
-      (r) => getRunStateLabel(r.run.state) === "awaitingGuidance",
-    ).length;
-  }, [filteredRunRows]);
-
-  const avgRunDurationMs = useMemo(
-    () => averageRunDurationMs(completedRunRows.map((r) => r.run)),
-    [completedRunRows],
-  );
 
   const topVendor = useMemo(
     () => topVendorStatsFromRuns(filteredRunRows.map((r) => r.run)),
@@ -507,7 +477,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
-            {DOMAIN.entity.plural} performance overview
+            Validation health, payments, and triage for the selected period
           </p>
         </div>
         <TimePeriodSelect />
@@ -673,7 +643,7 @@ export default function DashboardPage() {
                       >
                         {pendingPaymentFailureBreakdown.totalFailMarks === 0 ? (
                           <div
-                            className={`flex w-full items-center justify-center px-1 text-center text-[13px] font-semibold text-[#3f4600] ${CHART_BAR.fail}`}
+                            className={`flex w-full items-center justify-center px-1 text-center text-[13px] font-semibold text-[#3f4600] ${PENDING_FAIL_COLORS[0]}`}
                           >
                             {completedChecksInvoiceStats.pendingCount} pending
                           </div>
@@ -725,16 +695,6 @@ export default function DashboardPage() {
                         ({completedChecksInvoiceStats.processedCount})
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-xs">
-                      <span
-                        className={`size-2.5 shrink-0 rounded-sm ${CHART_BAR.fail}`}
-                        aria-hidden
-                      />
-                      <span className="text-foreground">Pending payment</span>
-                      <span className="text-muted-foreground">
-                        ({completedChecksInvoiceStats.pendingCount})
-                      </span>
-                    </div>
                     {pendingPaymentFailureBreakdown.items.map((seg) => (
                       <div
                         key={seg.key}
@@ -760,53 +720,6 @@ export default function DashboardPage() {
         <InvoicesTablesSection showInvoicesOnHold={false} />
 
       </div>
-
-      {/* Kognitos Automation Insights (moved to bottom) */}
-      {(insights != null || filteredRunRows.length > 0) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-primary" />
-              Kognitos Automation Insights
-            </CardTitle>
-            {filteredRunRows.length > 0 && (
-              <p className="text-sm text-muted-foreground">
-                Values in this card reflect the selected time window.
-              </p>
-            )}
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Total Runs
-                </p>
-                <p className="text-lg font-bold">{totalRunsDisplay}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Completion rate
-                </p>
-                <p className="text-lg font-bold">{stpDisplay}%</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Average Run Time
-                </p>
-                <p className="text-lg font-bold">
-                  {formatDurationMs(avgRunDurationMs)}
-                </p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Awaiting Guidance
-                </p>
-                <p className="text-lg font-bold">{awaitingGuidanceDisplay}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

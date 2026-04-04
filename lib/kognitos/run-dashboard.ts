@@ -96,10 +96,24 @@ export function getStateReason(state: KognitosRun["state"]): string {
   return reason.charAt(0).toUpperCase() + reason.slice(1);
 }
 
-export function formatRunTime(iso?: string): string {
+export function formatRunTime(
+  iso?: string,
+  opts?: { omitSeconds?: boolean },
+): string {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleString();
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    if (opts?.omitSeconds) {
+      return d.toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    }
+    return d.toLocaleString();
   } catch {
     return iso;
   }

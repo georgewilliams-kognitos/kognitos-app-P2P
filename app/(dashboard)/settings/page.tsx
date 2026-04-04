@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { KognitosAutomationInsightsCard } from "@/components/dashboard/kognitos-automation-insights-card";
 import { DOMAIN } from "@/lib/domain.config";
 
 /* CUSTOMIZE: Adjust organization fields for your domain. */
@@ -101,6 +102,10 @@ export default function SettingsPage() {
           </Card>
         </Link>
       </div>
+
+      <Separator />
+
+      <KognitosAutomationInsightsCard />
     </div>
   );
 }
