@@ -260,6 +260,15 @@ export function buildP2pTriageAlertsForVendor(
   );
 }
 
+/** Triage alerts for a single run (same rules as dashboard / vendor banner). */
+export function getTriageAlertsForRun(
+  row: KognitosRunRow,
+  allRows: KognitosRunRow[],
+): TriageAlert[] {
+  const superseded = getSupersededFailedRunNames(allRows);
+  return triageAlertsFromRun(row, superseded);
+}
+
 export const TRIAGE_CHECK_ORDER: TriageCheckKey[] = [...CHECK_KEYS];
 
 export function failedCheckSectionTitle(key: TriageCheckKey): string {

@@ -13,6 +13,7 @@ import {
   Download,
   ExternalLink,
   Lock,
+  Mail,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Popover,
   PopoverContent,
@@ -54,6 +56,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   listKognitosRunRowsFromDb,
   listVendors,
@@ -84,8 +92,14 @@ import {
   extractFourWayMatchFromRun,
   extractVendorFromRun,
 } from "@/lib/p2p-insights";
+import { getTriageAlertsForRun } from "@/lib/p2p-triage";
+import { buildVendorInvoiceRowDraftEmail } from "@/lib/vendor-triage-email";
 
 const RUN_TABLE_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
+
+/** Shared outline + emerald hover for action icon buttons in the invoices table. */
+const INVOICES_ACTIONS_ICON_BUTTON_CLASS =
+  "group text-muted-foreground shadow-xs not-disabled:hover:!border-emerald-600 not-disabled:hover:!bg-emerald-600 not-disabled:hover:!text-white not-disabled:hover:shadow-sm focus-visible:ring-emerald-500/90 dark:not-disabled:hover:!bg-emerald-600";
 
 type CompletedPaymentFilter = "pending" | "processed" | "all";
 
@@ -179,6 +193,12 @@ export function InvoicesTablesSection({
   }, [searchParams]);
   const [invoicePreview, setInvoicePreview] =
     useState<DashboardInvoicePreview | null>(null);
+  const [emailDraftDialog, setEmailDraftDialog] = useState<{
+    vendor: Vendor;
+    subject: string;
+    body: string;
+  } | null>(null);
+  const [emailCopied, setEmailCopied] = useState(false);
   /** Empty = all vendors (no filter). */
   const [selectedVendorKeys, setSelectedVendorKeys] = useState<string[]>([]);
 
@@ -378,8 +398,9 @@ export function InvoicesTablesSection({
   }, [incompleteRowsPerPage]);
 
   return (
-    <>
-      <Card>
+    <TooltipProvider delayDuration={0}>
+      <>
+        <Card>
         <CardHeader>
           <CardTitle>Invoices Analyzed</CardTitle>
           <CardDescription>
@@ -505,8 +526,8 @@ export function InvoicesTablesSection({
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Vendor Name</TableHead>
-                          <TableHead>Invoice Number</TableHead>
+                          <TableHead>Vendor</TableHead>
+                          <TableHead>Invoice</TableHead>
                           <TableHead>Value</TableHead>
                           <TableHead
                             className="w-11 min-w-[2.75rem] text-center text-xs font-medium uppercase"
@@ -538,7 +559,8 @@ export function InvoicesTablesSection({
                           >
                             PAY
                           </TableHead>
-                          <TableHead className="text-right">Completed</TableHead>
+                          <TableHead>Completed</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -579,6 +601,13 @@ export function InvoicesTablesSection({
                                 )
                               : "—";
                           const href = kognitosRunOpenHref(run.name);
+                          const rowTriageAlerts = getTriageAlertsForRun(
+                            row,
+                            runRows,
+                          );
+                          const canDraftEmail =
+                            Boolean(vendorResolved) &&
+                            rowTriageAlerts.length > 0;
                           return (
                             <TableRow key={run.name}>
                               <TableCell>
@@ -652,19 +681,75 @@ export function InvoicesTablesSection({
                                   pass={enriched?.paymentApproved}
                                 />
                               </TableCell>
-                              <TableCell className="text-right text-muted-foreground">
-                                {state === "completed" ? (
-                                  <a
-                                    href={href}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-muted-foreground hover:underline"
-                                  >
-                                    {completedTimeStr}
-                                  </a>
-                                ) : (
-                                  completedTimeStr
-                                )}
+                              <TableCell>{completedTimeStr}</TableCell>
+                              <TableCell className="text-right">
+                                <div className="inline-flex items-center justify-end gap-1">
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="icon-xs"
+                                        className={`${INVOICES_ACTIONS_ICON_BUTTON_CLASS} [&_svg]:size-4`}
+                                        disabled={!canDraftEmail}
+                                        aria-label="Draft email to vendor"
+                                        onClick={() => {
+                                          if (!vendorResolved || !canDraftEmail)
+                                            return;
+                                          const { subject, body } =
+                                            buildVendorInvoiceRowDraftEmail(
+                                              rowTriageAlerts,
+                                              vendorResolved,
+                                            );
+                                          setEmailDraftDialog({
+                                            vendor: vendorResolved,
+                                            subject,
+                                            body,
+                                          });
+                                          setEmailCopied(false);
+                                        }}
+                                      >
+                                        <Mail
+                                          className="size-4 text-muted-foreground transition-colors group-hover:text-white"
+                                          aria-hidden
+                                        />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      {!vendorResolved
+                                        ? "Vendor must be linked to a master record"
+                                        : rowTriageAlerts.length === 0
+                                          ? "No payment issues to follow up for this invoice"
+                                          : "Draft email to vendor"}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        asChild
+                                        variant="outline"
+                                        size="icon-xs"
+                                        className={`${INVOICES_ACTIONS_ICON_BUTTON_CLASS} [&_img]:size-4`}
+                                      >
+                                        <a
+                                          href={href}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          aria-label="Review in Kognitos"
+                                        >
+                                          <img
+                                            src="/kognitos-review.png"
+                                            alt=""
+                                            className="size-4 shrink-0 object-contain opacity-80 transition-[filter,opacity] group-hover:opacity-100 group-hover:brightness-0 group-hover:invert"
+                                          />
+                                        </a>
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      Review in Kognitos
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </div>
                               </TableCell>
                             </TableRow>
                           );
@@ -1005,6 +1090,86 @@ export function InvoicesTablesSection({
           ) : null}
         </DialogContent>
       </Dialog>
-    </>
+
+      <Dialog
+        open={emailDraftDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setEmailDraftDialog(null);
+        }}
+      >
+        <DialogContent
+          className="max-h-[90vh] overflow-y-auto sm:max-w-lg md:max-w-3xl"
+          showCloseButton
+        >
+          {emailDraftDialog ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Draft email</DialogTitle>
+                <DialogDescription>
+                  Review and send to{" "}
+                  {emailDraftDialog.vendor.primary_contact_email?.trim() ??
+                    "your vendor contact"}
+                  .
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Subject
+                </p>
+                <p className="rounded-md border bg-muted/30 px-3 py-2 font-sans text-sm">
+                  {emailDraftDialog.subject}
+                </p>
+                <p className="text-xs font-medium text-muted-foreground">
+                  Message
+                </p>
+                <Textarea
+                  readOnly
+                  value={emailDraftDialog.body}
+                  className="min-h-[280px] resize-y font-sans text-sm leading-relaxed"
+                />
+              </div>
+              <DialogFooter className="gap-2 sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(
+                        `Subject: ${emailDraftDialog.subject}\n\n${emailDraftDialog.body}`,
+                      );
+                      setEmailCopied(true);
+                      setTimeout(() => setEmailCopied(false), 2000);
+                    } catch {
+                      setEmailCopied(false);
+                    }
+                  }}
+                >
+                  {emailCopied ? "Copied" : "Copy email"}
+                </Button>
+                {emailDraftDialog.vendor.primary_contact_email?.trim() &&
+                emailDraftDialog.subject ? (
+                  <Button type="button" asChild>
+                    <a
+                      href={`mailto:${encodeURIComponent(
+                        emailDraftDialog.vendor.primary_contact_email.trim(),
+                      )}?subject=${encodeURIComponent(
+                        emailDraftDialog.subject,
+                      )}&body=${encodeURIComponent(emailDraftDialog.body)}`}
+                    >
+                      Open in email app
+                    </a>
+                  </Button>
+                ) : (
+                  <Button type="button" variant="secondary" disabled>
+                    Add contact email to vendor record
+                  </Button>
+                )}
+              </DialogFooter>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+      </>
+    </TooltipProvider>
   );
 }

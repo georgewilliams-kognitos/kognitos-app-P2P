@@ -107,3 +107,55 @@ export function buildVendorTriageDraftEmail(
 ): { to: string; subject: string; body: string } {
   return buildVendorTriageConsolidatedDraftEmail([alert], vendor, alert.checkKey);
 }
+
+/**
+ * One draft per invoice row: one failed check uses {@link buildVendorTriageDraftEmail};
+ * multiple failed checks on the same run are combined into a single message.
+ */
+export function buildVendorInvoiceRowDraftEmail(
+  alerts: TriageAlert[],
+  vendor: Vendor,
+): { to: string; subject: string; body: string } {
+  const to = vendor.primary_contact_email?.trim() ?? "";
+  const greetName = vendor.primary_contact_name?.trim() ?? "Team";
+  const company = vendor.company_name;
+
+  if (alerts.length === 0) {
+    return { to, subject: "", body: "" };
+  }
+
+  if (alerts.length === 1) {
+    return buildVendorTriageDraftEmail(alerts[0], vendor);
+  }
+
+  const inv = alerts[0].invoiceNumber;
+  const subject = `Invoice ${inv} — ${alerts.length} validation items review requested (${company})`;
+
+  const lines: string[] = [
+    `Dear ${greetName},`,
+    ``,
+    `We are following up on our Procure-to-Pay validation for ${company}. The automated review did not approve payment because the following checks did not pass for invoice ${inv}:`,
+    ``,
+  ];
+
+  for (const alert of alerts) {
+    lines.push(`---`);
+    lines.push(alert.checkLabel);
+    lines.push(`— Invoice ID: ${alert.invoiceNumber}`);
+    lines.push(`— Invoice date: ${alert.invoiceDateText}`);
+    lines.push(`— Invoice total: ${alert.totalInvoiceValueText}`);
+    lines.push(`— Purchase order (reference): ${alert.poNumber}`);
+    lines.push(`— Material / item: ${alert.materialName}`);
+    lines.push(`— Quantity purchased (as stated): ${alert.quantityText}`);
+    lines.push(``);
+  }
+
+  lines.push(
+    `Please review each item above and confirm whether the information is accurate, or provide corrected documentation so we can release payment.`,
+    ``,
+    `Thank you,`,
+    `Accounts Payable`,
+  );
+
+  return { to, subject, body: lines.join("\n") };
+}
