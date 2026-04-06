@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Check,
   ChevronDown,
@@ -11,9 +18,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Eye,
   ExternalLink,
   Lock,
   Mail,
+  Play,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -97,9 +106,37 @@ import { buildVendorInvoiceRowDraftEmail } from "@/lib/vendor-triage-email";
 
 const RUN_TABLE_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
 
-/** Shared outline + emerald hover for action icon buttons in the invoices table. */
+/** Shared outline + emerald hover for action icon buttons (`group/btn` avoids clashing with `group/row` on the table row). */
 const INVOICES_ACTIONS_ICON_BUTTON_CLASS =
-  "group text-muted-foreground shadow-xs not-disabled:hover:!border-emerald-600 not-disabled:hover:!bg-emerald-600 not-disabled:hover:!text-white not-disabled:hover:shadow-sm focus-visible:ring-emerald-500/90 dark:not-disabled:hover:!bg-emerald-600";
+  "group/btn text-muted-foreground shadow-xs not-disabled:hover:!border-emerald-600 not-disabled:hover:!bg-emerald-600 not-disabled:hover:!text-white not-disabled:hover:shadow-sm focus-visible:ring-emerald-500/90 dark:not-disabled:hover:!bg-emerald-600";
+
+/** Emerald primary actions (matches vendor Action Items “Draft Email” style). */
+const INVOICES_EMERALD_ACTION_BUTTON_CLASS =
+  "gap-1.5 bg-emerald-600 font-semibold text-white shadow-sm hover:bg-emerald-100 hover:text-black focus-visible:ring-emerald-500/90 dark:bg-emerald-600 dark:hover:bg-emerald-200 dark:hover:text-black";
+
+type ReanalyzeDialogPayload = {
+  vendorLabel: string;
+  invoiceNumber: string;
+  valueText: string;
+  documentMatch?: string;
+  quantityAndUnitMatch?: string;
+  valueMatch?: string;
+  coaValidation?: string;
+  paymentApproved?: boolean;
+  runId: string;
+};
+
+function fourWayCellLabel(v: string | undefined): string {
+  if (v === "PASS") return "Pass";
+  if (v === "FAIL") return "Fail";
+  return "—";
+}
+
+function paymentCellLabel(approved: boolean | undefined): string {
+  if (approved === true) return "Pass";
+  if (approved === false) return "Fail";
+  return "—";
+}
 
 type CompletedPaymentFilter = "pending" | "processed" | "all";
 
@@ -199,8 +236,23 @@ export function InvoicesTablesSection({
     body: string;
   } | null>(null);
   const [emailCopied, setEmailCopied] = useState(false);
+  const [reanalyzeDialog, setReanalyzeDialog] =
+    useState<ReanalyzeDialogPayload | null>(null);
   /** Empty = all vendors (no filter). */
   const [selectedVendorKeys, setSelectedVendorKeys] = useState<string[]>([]);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const [tableScrollEl, setTableScrollEl] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const [actionsColumnStacked, setActionsColumnStacked] = useState(false);
+
+  const setTableScrollContainer = useCallback(
+    (node: HTMLDivElement | null) => {
+      tableScrollRef.current = node;
+      setTableScrollEl(node);
+    },
+    [],
+  );
 
   const loadRuns = useCallback(() => {
     listKognitosRunRowsFromDb()
@@ -312,6 +364,29 @@ export function InvoicesTablesSection({
     lockedVendorId,
   ]);
 
+  useLayoutEffect(() => {
+    const el = tableScrollEl;
+    if (!el) return;
+    const sync = () => {
+      setActionsColumnStacked(el.scrollLeft > 0);
+    };
+    sync();
+    const raf = requestAnimationFrame(sync);
+    el.addEventListener("scroll", sync, { passive: true });
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener("scroll", sync);
+      ro.disconnect();
+    };
+  }, [
+    tableScrollEl,
+    completedRunRowsFiltered.length,
+    completedPage,
+    completedRowsPerPage,
+  ]);
+
   const incompleteRunRowsForView = useMemo(() => {
     if (!lockedVendorId) return incompleteRunRows;
     return incompleteRunRows.filter((row) =>
@@ -396,6 +471,15 @@ export function InvoicesTablesSection({
   useEffect(() => {
     setIncompletePage(0);
   }, [incompleteRowsPerPage]);
+
+  /** Inset line + border; `border-separate` keeps the sticky column’s left edge visible. Width 1pt to match design. */
+  const actionsStickyEdge = actionsColumnStacked
+    ? "border-l-[1pt] border-border pl-3 shadow-[inset_1pt_0_0_0_hsl(var(--border)),inset_1px_0_0_0_rgba(0,0,0,0.06),-10px_0_20px_-6px_rgba(0,0,0,0.1),-4px_0_8px_-2px_rgba(0,0,0,0.06)] dark:shadow-[inset_1pt_0_0_0_hsl(var(--border)),inset_1px_0_0_0_rgba(255,255,255,0.06),-12px_0_24px_-6px_rgba(0,0,0,0.55),-4px_0_10px_-2px_rgba(0,0,0,0.35)]"
+    : "border-l-[1pt] border-border pl-3 shadow-[inset_1pt_0_0_0_hsl(var(--border))]";
+
+  const actionsHeadSticky = `sticky right-0 z-20 min-w-[6.75rem] bg-background text-right ${actionsStickyEdge}`;
+  /** Opaque hover fill so stacked sticky Actions cells don’t show scrolled content behind (muted/50 is translucent). */
+  const actionsCellSticky = `sticky right-0 z-10 min-w-[6.75rem] bg-background text-right group-hover/row:bg-muted ${actionsStickyEdge}`;
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -522,8 +606,11 @@ export function InvoicesTablesSection({
                 </p>
               ) : (
                 <>
-                  <div className="max-w-full overflow-x-auto">
-                    <Table>
+                  <div className="max-w-full">
+                    <Table
+                      ref={setTableScrollContainer}
+                      className="border-separate border-spacing-0 [&_thead_tr_th]:border-b [&_thead_tr_th]:border-border [&_tbody_tr_td]:border-b [&_tbody_tr_td]:border-border [&_tbody_tr:last-child_td]:border-b-0"
+                    >
                       <TableHeader>
                         <TableRow>
                           <TableHead>Vendor</TableHead>
@@ -560,7 +647,9 @@ export function InvoicesTablesSection({
                             PAY
                           </TableHead>
                           <TableHead>Completed</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
+                          <TableHead className={actionsHeadSticky}>
+                            Actions
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -609,7 +698,7 @@ export function InvoicesTablesSection({
                             Boolean(vendorResolved) &&
                             rowTriageAlerts.length > 0;
                           return (
-                            <TableRow key={run.name}>
+                            <TableRow key={run.name} className="group/row">
                               <TableCell>
                                 {vendorPageHref ? (
                                   <Link
@@ -682,8 +771,33 @@ export function InvoicesTablesSection({
                                 />
                               </TableCell>
                               <TableCell>{completedTimeStr}</TableCell>
-                              <TableCell className="text-right">
+                              <TableCell className={actionsCellSticky}>
                                 <div className="inline-flex items-center justify-end gap-1">
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        asChild
+                                        variant="outline"
+                                        size="icon-xs"
+                                        className={`${INVOICES_ACTIONS_ICON_BUTTON_CLASS} [&_svg]:size-4`}
+                                      >
+                                        <a
+                                          href={href}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          aria-label="Review in Kognitos"
+                                        >
+                                          <Eye
+                                            className="size-4 text-muted-foreground transition-colors group-hover/btn:text-white"
+                                            aria-hidden
+                                          />
+                                        </a>
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      Review in Kognitos
+                                    </TooltipContent>
+                                  </Tooltip>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
@@ -710,7 +824,7 @@ export function InvoicesTablesSection({
                                         }}
                                       >
                                         <Mail
-                                          className="size-4 text-muted-foreground transition-colors group-hover:text-white"
+                                          className="size-4 text-muted-foreground transition-colors group-hover/btn:text-white"
                                           aria-hidden
                                         />
                                       </Button>
@@ -726,27 +840,47 @@ export function InvoicesTablesSection({
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
-                                        asChild
+                                        type="button"
                                         variant="outline"
                                         size="icon-xs"
-                                        className={`${INVOICES_ACTIONS_ICON_BUTTON_CLASS} [&_img]:size-4`}
+                                        className={`${INVOICES_ACTIONS_ICON_BUTTON_CLASS} [&_svg]:size-4`}
+                                        aria-label="Re-analyze in Kognitos"
+                                        onClick={() => {
+                                          setReanalyzeDialog({
+                                            vendorLabel,
+                                            invoiceNumber: invoiceLabel,
+                                            valueText:
+                                              enriched?.poTotalValue != null
+                                                ? new Intl.NumberFormat(
+                                                    "en-US",
+                                                    {
+                                                      style: "currency",
+                                                      currency: "USD",
+                                                      minimumFractionDigits: 0,
+                                                      maximumFractionDigits: 2,
+                                                    },
+                                                  ).format(enriched.poTotalValue)
+                                                : "—",
+                                            documentMatch: enriched?.documentMatch,
+                                            quantityAndUnitMatch:
+                                              enriched?.quantityAndUnitMatch,
+                                            valueMatch: enriched?.valueMatch,
+                                            coaValidation:
+                                              enriched?.coaValidation,
+                                            paymentApproved:
+                                              enriched?.paymentApproved,
+                                            runId,
+                                          });
+                                        }}
                                       >
-                                        <a
-                                          href={href}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          aria-label="Review in Kognitos"
-                                        >
-                                          <img
-                                            src="/kognitos-review.png"
-                                            alt=""
-                                            className="size-4 shrink-0 object-contain opacity-80 transition-[filter,opacity] group-hover:opacity-100 group-hover:brightness-0 group-hover:invert"
-                                          />
-                                        </a>
+                                        <Play
+                                          className="size-4 text-muted-foreground transition-colors group-hover/btn:text-white"
+                                          aria-hidden
+                                        />
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent side="top">
-                                      Review in Kognitos
+                                      Re-analyze in Kognitos
                                     </TooltipContent>
                                   </Tooltip>
                                 </div>
@@ -1164,6 +1298,120 @@ export function InvoicesTablesSection({
                     Add contact email to vendor record
                   </Button>
                 )}
+              </DialogFooter>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={reanalyzeDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setReanalyzeDialog(null);
+        }}
+      >
+        <DialogContent
+          className="max-h-[90vh] overflow-y-auto sm:max-w-lg"
+          showCloseButton
+        >
+          {reanalyzeDialog ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Re-analyze in Kognitos</DialogTitle>
+                <DialogDescription>
+                  Analysis summary for Invoice {reanalyzeDialog.invoiceNumber}{" "}
+                  from {reanalyzeDialog.vendorLabel}.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 text-sm">
+                <div className="rounded-lg border border-border/70 bg-card px-4 py-3 shadow-sm">
+                  <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Invoice
+                  </p>
+                  <dl className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-0.5">
+                      <dt className="text-xs text-muted-foreground">Vendor</dt>
+                      <dd className="font-medium text-foreground">
+                        {reanalyzeDialog.vendorLabel}
+                      </dd>
+                    </div>
+                    <div className="space-y-0.5">
+                      <dt className="text-xs text-muted-foreground">Invoice</dt>
+                      <dd className="font-medium text-foreground">
+                        {reanalyzeDialog.invoiceNumber}
+                      </dd>
+                    </div>
+                    <div className="space-y-0.5 sm:col-span-2">
+                      <dt className="text-xs text-muted-foreground">Value</dt>
+                      <dd className="font-medium text-foreground">
+                        {reanalyzeDialog.valueText}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+                <div className="rounded-lg border border-border/70 bg-card px-4 py-3 shadow-sm">
+                  <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    4-way match
+                  </p>
+                  <dl className="grid gap-2 sm:grid-cols-2">
+                    <div className="flex items-center justify-between gap-4 rounded-md bg-muted/30 px-2 py-1.5">
+                      <dt className="text-muted-foreground">DOC</dt>
+                      <dd className="font-medium tabular-nums">
+                        {fourWayCellLabel(reanalyzeDialog.documentMatch)}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 rounded-md bg-muted/30 px-2 py-1.5">
+                      <dt className="text-muted-foreground">QTY</dt>
+                      <dd className="font-medium tabular-nums">
+                        {fourWayCellLabel(
+                          reanalyzeDialog.quantityAndUnitMatch,
+                        )}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 rounded-md bg-muted/30 px-2 py-1.5">
+                      <dt className="text-muted-foreground">VAL</dt>
+                      <dd className="font-medium tabular-nums">
+                        {fourWayCellLabel(reanalyzeDialog.valueMatch)}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 rounded-md bg-muted/30 px-2 py-1.5">
+                      <dt className="text-muted-foreground">COA</dt>
+                      <dd className="font-medium tabular-nums">
+                        {fourWayCellLabel(reanalyzeDialog.coaValidation)}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 rounded-md bg-muted/30 px-2 py-1.5 sm:col-span-2">
+                      <dt className="text-muted-foreground">PAY</dt>
+                      <dd className="font-medium tabular-nums">
+                        {paymentCellLabel(reanalyzeDialog.paymentApproved)}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+              <DialogFooter className="flex-col gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  className={INVOICES_EMERALD_ACTION_BUTTON_CLASS}
+                >
+                  <Play
+                    className="size-4 shrink-0 fill-none stroke-[2.5] stroke-current"
+                    aria-hidden
+                  />
+                  Analyze with same invoice
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className={INVOICES_EMERALD_ACTION_BUTTON_CLASS}
+                >
+                  <Play
+                    className="size-4 shrink-0 fill-white stroke-none"
+                    aria-hidden
+                  />
+                  Analyze with new invoice
+                </Button>
               </DialogFooter>
             </>
           ) : null}

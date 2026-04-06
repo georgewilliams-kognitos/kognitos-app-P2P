@@ -113,12 +113,20 @@ export default function VendorDetailPage({
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <Button asChild variant="ghost" size="sm" className="-ml-2 w-fit">
-          <Link href="/vendors">
-            <ArrowLeft className="size-4" />
-            All Vendors
-          </Link>
-        </Button>
+        <div className="min-w-0">
+          <Button asChild variant="ghost" size="sm" className="-ml-2 mb-1 w-fit">
+            <Link href="/vendors">
+              <ArrowLeft className="size-4" />
+              All Vendors
+            </Link>
+          </Button>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {vendor.company_name}
+          </h1>
+          <p className="font-mono text-sm text-muted-foreground">
+            {vendor.vendor_id}
+          </p>
+        </div>
         <TimePeriodSelect />
       </div>
 
@@ -128,10 +136,7 @@ export default function VendorDetailPage({
         <CardHeader className="pb-0">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-1">
-              <CardTitle className="text-xl">{vendor.company_name}</CardTitle>
-              <p className="font-mono text-sm text-muted-foreground">
-                {vendor.vendor_id}
-              </p>
+              <CardTitle>Overview</CardTitle>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">{vendor.qualification_status ?? "—"}</Badge>
