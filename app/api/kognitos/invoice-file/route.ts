@@ -1,26 +1,29 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { downloadOrganizationFile } from "@/lib/kognitos/client-core";
+import { downloadInvoiceFileWithWorkspaceFallback } from "@/lib/kognitos/client-core";
 
 export const runtime = "nodejs";
 
 /**
- * Proxy PDF (or other) bytes from Kognitos Files API. Validates the file belongs to
- * `vendor_invoices` for the given vendor + run + input key.
+ * Proxy PDF (or other) bytes from Kognitos Files API (workspace `{file}:download` first, then org).
+ * Validates the file belongs to `vendor_invoices` for the given run + input key (+ optional vendor_id filter).
  *
- * Query: vendorId, runId, inputKey — required.
+ * Query: runId, inputKey — required. vendorId optional (`vendor_invoices` is unique on run + input key).
  * Optional: disposition=attachment for downloads.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const vendorId = url.searchParams.get("vendorId");
+  const vendorId = url.searchParams.get("vendorId")?.trim() || null;
   const runId = url.searchParams.get("runId");
   const inputKey = url.searchParams.get("inputKey");
   const disposition = url.searchParams.get("disposition");
 
-  if (!vendorId?.trim() || !runId?.trim() || !inputKey?.trim()) {
+  if (!runId?.trim() || !inputKey?.trim()) {
     return NextResponse.json(
-      { error: "missing_params", message: "vendorId, runId, and inputKey are required." },
+      {
+        error: "missing_params",
+        message: "runId and inputKey are required.",
+      },
       { status: 400 },
     );
   }
@@ -32,13 +35,13 @@ export async function GET(req: Request) {
     );
   }
 
-  const { data, error } = await supabaseAdmin
+  let invQuery = supabaseAdmin
     .from("vendor_invoices")
     .select("*")
-    .eq("vendor_id", vendorId)
-    .eq("kognitos_run_id", runId)
-    .eq("input_key", inputKey)
-    .maybeSingle();
+    .eq("kognitos_run_id", runId.trim())
+    .eq("input_key", inputKey.trim());
+  if (vendorId) invQuery = invQuery.eq("vendor_id", vendorId);
+  const { data, error } = await invQuery.maybeSingle();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -61,7 +64,7 @@ export async function GET(req: Request) {
   const safeName = (data.file_name as string | null)?.replace(/[^\w.\- ()[\]]+/g, "_") || "document.pdf";
 
   try {
-    const upstream = await downloadOrganizationFile(fileId);
+    const upstream = await downloadInvoiceFileWithWorkspaceFallback(fileId);
     const headers = new Headers();
     let contentType = upstream.headers.get("content-type")?.trim() || "";
     if (

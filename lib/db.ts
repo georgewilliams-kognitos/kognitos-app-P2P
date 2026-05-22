@@ -259,6 +259,18 @@ function normalizeLooseText(value: string) {
     .trim();
 }
 
+/** SAP-style numeric vendor ids may differ only by leading zeros (e.g. 0017300016 vs 17300016). */
+function vendorIdsDigitsEqual(a: string, b: string): boolean {
+  const ta = a.trim();
+  const tb = b.trim();
+  if (!/^\d+$/.test(ta) || !/^\d+$/.test(tb)) return false;
+  try {
+    return BigInt(ta) === BigInt(tb);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Match extracted vendor text to a master row using the same rules as
  * {@link findVendorByDisplayName}, without fetching. Pass the result of {@link getAllVendors}
@@ -271,7 +283,10 @@ export function resolveVendorByDisplayName(
   const trimmed = displayName.trim();
   if (!trimmed) return null;
 
-  const byVendorId = vendors.find((v) => v.vendor_id === trimmed);
+  const byVendorId = vendors.find(
+    (v) =>
+      v.vendor_id === trimmed || vendorIdsDigitsEqual(v.vendor_id, trimmed),
+  );
   if (byVendorId) return byVendorId;
 
   const normalized = normalizeLooseText(displayName);
@@ -411,6 +426,34 @@ export async function listVendorInvoicesForVendor(
     .order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []) as VendorInvoice[];
+}
+
+/**
+ * `vendor_id` from indexed `vendor_invoices` per run, for invoice PDF links when
+ * display-name resolution misses the vendor row (e.g. odd supplier text in Markdown/IDP).
+ */
+export async function mapVendorIdsByKognitosRunIds(
+  runIds: string[],
+): Promise<Record<string, string>> {
+  const unique = [
+    ...new Set(
+      runIds.map((id) => String(id).trim()).filter((id) => id.length > 0),
+    ),
+  ];
+  const out: Record<string, string> = {};
+  if (unique.length === 0) return out;
+  const { data, error } = await sb()
+    .from("vendor_invoices")
+    .select("kognitos_run_id, vendor_id")
+    .in("kognitos_run_id", unique);
+  if (error) throw error;
+  for (const row of data ?? []) {
+    const rid = String(row.kognitos_run_id ?? "").trim();
+    const vid = String(row.vendor_id ?? "").trim();
+    if (!rid || !vid || out[rid]) continue;
+    out[rid] = vid;
+  }
+  return out;
 }
 
 // ── Kognitos (reads from synced Supabase tables) ───────────────

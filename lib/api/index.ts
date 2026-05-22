@@ -41,6 +41,7 @@ export {
   getKognitosRunFromDb,
   getKognitosInsightsCacheFromDb,
   listKognitosRunRowsFromDb,
+  mapVendorIdsByKognitosRunIds,
   type KognitosRunRow,
 } from "@/lib/db";
 

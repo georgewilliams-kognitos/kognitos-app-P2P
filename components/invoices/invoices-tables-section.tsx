@@ -74,6 +74,7 @@ import {
 import {
   listKognitosRunRowsFromDb,
   listVendors,
+  mapVendorIdsByKognitosRunIds,
   resolveVendorByDisplayName,
   type KognitosRunRow,
 } from "@/lib/api";
@@ -82,6 +83,7 @@ import { inSelectedPeriod } from "@/lib/dashboard-time-period";
 import { useSharedTimePeriod } from "@/contexts/time-period-context";
 import {
   dashboardInvoiceFileHref,
+  payloadSuggestsIndexedInvoiceFile,
   type DashboardInvoicePreview,
 } from "@/lib/dashboard-invoice-file";
 import {
@@ -140,13 +142,18 @@ function paymentCellLabel(approved: boolean | undefined): string {
 
 type CompletedPaymentFilter = "pending" | "processed" | "all";
 
-function vendorFilterKeyForRun(
-  run: KognitosRunRow["run"],
+function vendorFilterKeyForRow(
+  row: KognitosRunRow,
   vendorsList: Vendor[],
+  vendorIdByRunId: Record<string, string>,
 ): string {
-  const extracted = extractVendorFromRun(run);
+  const extracted = extractVendorFromRun(row.run);
   const resolved = resolveVendorByDisplayName(vendorsList, extracted ?? "");
   if (resolved) return `id:${resolved.vendor_id}`;
+  const hinted = vendorsList.find(
+    (v) => v.vendor_id === vendorIdByRunId[row.id],
+  );
+  if (hinted) return `id:${hinted.vendor_id}`;
   const t = extracted?.trim();
   if (t) return `name:${t.toLowerCase()}`;
   return "__none__";
@@ -156,7 +163,9 @@ function rowMatchesLockedVendor(
   row: KognitosRunRow,
   vendorsList: Vendor[],
   lockedVendorId: string,
+  vendorIdByRunId: Record<string, string>,
 ): boolean {
+  if (vendorIdByRunId[row.id] === lockedVendorId) return true;
   const resolved = resolveVendorByDisplayName(
     vendorsList,
     extractVendorFromRun(row.run) ?? "",
@@ -210,6 +219,9 @@ export function InvoicesTablesSection({
   const searchParams = useSearchParams();
   const { timePeriod } = useSharedTimePeriod();
   const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
+  const [invoicePdfVendorByRunId, setInvoicePdfVendorByRunId] = useState<
+    Record<string, string>
+  >({});
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [completedPage, setCompletedPage] = useState(0);
   const [incompletePage, setIncompletePage] = useState(0);
@@ -274,6 +286,26 @@ export function InvoicesTablesSection({
   }, [loadRuns]);
 
   useEffect(() => {
+    const ids = runRows.map((r) => r.id);
+    if (ids.length === 0) {
+      setInvoicePdfVendorByRunId({});
+      return;
+    }
+    let cancelled = false;
+    mapVendorIdsByKognitosRunIds(ids)
+      .then((m) => {
+        if (!cancelled) setInvoicePdfVendorByRunId(m);
+      })
+      .catch((err) => {
+        console.error("mapVendorIdsByKognitosRunIds:", err);
+        if (!cancelled) setInvoicePdfVendorByRunId({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runRows]);
+
+  useEffect(() => {
     listVendors()
       .then(setVendors)
       .catch(() => setVendors([]));
@@ -310,7 +342,7 @@ export function InvoicesTablesSection({
   const analyzedVendorOptions = useMemo(() => {
     const map = new Map<string, string>();
     for (const row of completedRunRows) {
-      const key = vendorFilterKeyForRun(row.run, vendors);
+      const key = vendorFilterKeyForRow(row, vendors, invoicePdfVendorByRunId);
       if (map.has(key)) continue;
       const extracted = extractVendorFromRun(row.run);
       const resolved = resolveVendorByDisplayName(vendors, extracted ?? "");
@@ -322,7 +354,7 @@ export function InvoicesTablesSection({
     return Array.from(map.entries())
       .map(([key, label]) => ({ key, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [completedRunRows, vendors]);
+  }, [completedRunRows, vendors, invoicePdfVendorByRunId]);
 
   useEffect(() => {
     if (lockedVendorId) return;
@@ -348,12 +380,17 @@ export function InvoicesTablesSection({
     let base = completedRunRowsByPayment;
     if (lockedVendorId) {
       base = base.filter((row) =>
-        rowMatchesLockedVendor(row, vendors, lockedVendorId),
+        rowMatchesLockedVendor(
+          row,
+          vendors,
+          lockedVendorId,
+          invoicePdfVendorByRunId,
+        ),
       );
     } else if (selectedVendorKeys.length > 0) {
       const sel = new Set(selectedVendorKeys);
       base = base.filter((row) =>
-        sel.has(vendorFilterKeyForRun(row.run, vendors)),
+        sel.has(vendorFilterKeyForRow(row, vendors, invoicePdfVendorByRunId)),
       );
     }
     return base;
@@ -362,6 +399,7 @@ export function InvoicesTablesSection({
     selectedVendorKeys,
     vendors,
     lockedVendorId,
+    invoicePdfVendorByRunId,
   ]);
 
   useLayoutEffect(() => {
@@ -390,9 +428,14 @@ export function InvoicesTablesSection({
   const incompleteRunRowsForView = useMemo(() => {
     if (!lockedVendorId) return incompleteRunRows;
     return incompleteRunRows.filter((row) =>
-      rowMatchesLockedVendor(row, vendors, lockedVendorId),
+      rowMatchesLockedVendor(
+        row,
+        vendors,
+        lockedVendorId,
+        invoicePdfVendorByRunId,
+      ),
     );
-  }, [incompleteRunRows, lockedVendorId, vendors]);
+  }, [incompleteRunRows, lockedVendorId, vendors, invoicePdfVendorByRunId]);
 
   const completedLastPage = useMemo(
     () =>
@@ -614,6 +657,7 @@ export function InvoicesTablesSection({
                       <TableHeader>
                         <TableRow>
                           <TableHead>Vendor</TableHead>
+                          <TableHead>PO Number</TableHead>
                           <TableHead>Invoice</TableHead>
                           <TableHead>Value</TableHead>
                           <TableHead
@@ -665,6 +709,36 @@ export function InvoicesTablesSection({
                             vendors,
                             extractedVendor ?? "",
                           );
+                          const hintVendorId =
+                            kognitosRunTableId !== ""
+                              ? invoicePdfVendorByRunId[kognitosRunTableId]
+                              : undefined;
+                          const vendorFromIndex =
+                            hintVendorId != null
+                              ? (vendors.find(
+                                  (v) => v.vendor_id === hintVendorId,
+                                ) ?? null)
+                              : null;
+                          const vendorLocked =
+                            lockedVendorId != null
+                              ? (vendors.find(
+                                  (v) => v.vendor_id === lockedVendorId,
+                                ) ?? null)
+                              : null;
+                          const vendorForInvoicePdf =
+                            vendorResolved ??
+                            vendorFromIndex ??
+                            vendorLocked;
+                          const vendorIdForInvoiceFileUrl =
+                            vendorForInvoicePdf?.vendor_id ??
+                            (hintVendorId != null ? hintVendorId.trim() || null : null);
+                          /** File ref ⇒ run+inputKey can resolve in `vendor_invoices`; vendor id ⇒ strict or optional proxy query. */
+                          const canOfferInvoiceFileLink =
+                            kognitosRunTableId !== "" &&
+                            Boolean(
+                              vendorIdForInvoiceFileUrl ||
+                                payloadSuggestsIndexedInvoiceFile(payloadRaw),
+                            );
                           const vendorLabel =
                             vendorResolved?.company_name ??
                             (extractedVendor?.trim() ? extractedVendor : "—");
@@ -672,14 +746,16 @@ export function InvoicesTablesSection({
                             ? `/vendors/${vendorResolved.vendor_id}`
                             : null;
                           const invoiceLabel = enriched?.invoiceNumber ?? "—";
-                          const invoicePdfHref =
-                            vendorResolved && kognitosRunTableId
-                              ? dashboardInvoiceFileHref(
-                                  vendorResolved.vendor_id,
-                                  kognitosRunTableId,
-                                  payloadRaw,
-                                )
-                              : null;
+                          const poNumberLabel =
+                            enriched?.poNumber &&
+                            enriched.poNumber !== "—"
+                              ? enriched.poNumber
+                              : "—";
+                          const invoicePdfHref = canOfferInvoiceFileLink
+                            ? dashboardInvoiceFileHref(kognitosRunTableId, payloadRaw, {
+                                vendorId: vendorIdForInvoiceFileUrl,
+                              })
+                            : null;
                           const state = getRunStateLabel(run.state);
                           const completedTimeStr =
                             state === "completed"
@@ -711,15 +787,15 @@ export function InvoicesTablesSection({
                                   vendorLabel
                                 )}
                               </TableCell>
+                              <TableCell>{poNumberLabel}</TableCell>
                               <TableCell>
                                 {invoicePdfHref ? (
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      if (!vendorResolved || !kognitosRunTableId)
-                                        return;
+                                      if (!kognitosRunTableId || !invoicePdfHref) return;
                                       setInvoicePreview({
-                                        vendorId: vendorResolved.vendor_id,
+                                        vendorId: vendorIdForInvoiceFileUrl,
                                         runId: kognitosRunTableId,
                                         payloadRaw,
                                         invoiceNumber: invoiceLabel,
@@ -1178,12 +1254,12 @@ export function InvoicesTablesSection({
               </DialogHeader>
               <div className="min-h-0 flex-1 px-6 pb-2">
                 <iframe
-                  key={`${invoicePreview.vendorId}-${invoicePreview.runId}`}
+                  key={`${invoicePreview.vendorId ?? "run"}-${invoicePreview.runId}`}
                   title="Invoice document preview"
                   src={dashboardInvoiceFileHref(
-                    invoicePreview.vendorId,
                     invoicePreview.runId,
                     invoicePreview.payloadRaw,
+                    { vendorId: invoicePreview.vendorId },
                   )}
                   className="h-[min(72vh,820px)] w-full rounded-md border bg-muted"
                 />
@@ -1192,9 +1268,9 @@ export function InvoicesTablesSection({
                 <Button type="button" variant="ghost" size="sm" asChild>
                   <a
                     href={dashboardInvoiceFileHref(
-                      invoicePreview.vendorId,
                       invoicePreview.runId,
                       invoicePreview.payloadRaw,
+                      { vendorId: invoicePreview.vendorId },
                     )}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -1207,10 +1283,12 @@ export function InvoicesTablesSection({
                   <Button type="button" variant="outline" size="sm" asChild>
                     <a
                       href={dashboardInvoiceFileHref(
-                        invoicePreview.vendorId,
                         invoicePreview.runId,
                         invoicePreview.payloadRaw,
-                        "attachment",
+                        {
+                          vendorId: invoicePreview.vendorId,
+                          disposition: "attachment",
+                        },
                       )}
                       download
                     >

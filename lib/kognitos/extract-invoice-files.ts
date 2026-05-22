@@ -5,7 +5,7 @@
 
 export type ExtractedFileRef = {
   inputKey: string;
-  /** Path/query param for organizations/.../files/{file}:download */
+  /** `file.remote` segment used with workspace or org `.../files/{id}:download`. */
   remote: string | null;
   /** Present when the API inlined bytes (prefer persisting remote when available). */
   inlineFileName: string | null;

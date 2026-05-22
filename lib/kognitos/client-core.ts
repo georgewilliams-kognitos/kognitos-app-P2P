@@ -351,13 +351,7 @@ export async function getAutomationRunAggregates(): Promise<{
 }
 
 
-/**
- * Stream a file from Kognitos org Files API (binary). Caller must not forward credentials to the client.
- */
-export async function downloadOrganizationFile(fileId: string): Promise<Response> {
-  const org = requireOrg();
-  const enc = encodeURIComponent(fileId);
-  const path = `/api/v1/organizations/${encodeURIComponent(org)}/files/${enc}:download`;
+async function downloadFileAtPath(path: string): Promise<Response> {
   const res = await fetch(`${baseUrl()}${path}`, {
     headers: {
       Authorization: authHeader(),
@@ -371,4 +365,39 @@ export async function downloadOrganizationFile(fileId: string): Promise<Response
     );
   }
   return res;
+}
+
+/**
+ * Stream a file from the workspace Files API (binary). Prefer this for invoice inputs and run artifacts.
+ * Caller must not forward credentials to the client.
+ */
+export async function downloadWorkspaceFile(fileId: string): Promise<Response> {
+  const org = requireOrg();
+  const ws = requireWorkspace();
+  const enc = encodeURIComponent(fileId);
+  const path = `/api/v1/organizations/${encodeURIComponent(org)}/workspaces/${encodeURIComponent(ws)}/files/${enc}:download`;
+  return downloadFileAtPath(path);
+}
+
+/**
+ * Stream a file from organization-level Files API (binary). Fallback for older file references.
+ */
+export async function downloadOrganizationFile(fileId: string): Promise<Response> {
+  const org = requireOrg();
+  const enc = encodeURIComponent(fileId);
+  const path = `/api/v1/organizations/${encodeURIComponent(org)}/files/${enc}:download`;
+  return downloadFileAtPath(path);
+}
+
+/**
+ * Workspace-scoped download first, then org-level. Use for invoice preview proxying.
+ */
+export async function downloadInvoiceFileWithWorkspaceFallback(
+  fileId: string,
+): Promise<Response> {
+  try {
+    return await downloadWorkspaceFile(fileId);
+  } catch {
+    return downloadOrganizationFile(fileId);
+  }
 }
