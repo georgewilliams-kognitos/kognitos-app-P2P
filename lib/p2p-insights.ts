@@ -386,16 +386,62 @@ export function extractExtractionFieldValuesFromRun(
     .filter((v) => v.length > 0 && v !== "[object Object]");
 }
 
+function splitMarkdownTableRow(line: string): string[] {
+  return line
+    .split("|")
+    .map((s) => s.trim())
+    .filter((c, i, arr) => {
+      if (i === 0 && c === "") return false;
+      if (i === arr.length - 1 && c === "") return false;
+      return true;
+    });
+}
+
+/** Last table column when it is exactly PASS or FAIL (avoids matching "Pass" in data cells). */
+function validationStatusFromRowCells(cells: string[]): "PASS" | "FAIL" | undefined {
+  for (let i = cells.length - 1; i >= 0; i--) {
+    const cell = cells[i]?.trim() ?? "";
+    if (/^PASS$/i.test(cell)) return "PASS";
+    if (/^FAIL$/i.test(cell)) return "FAIL";
+  }
+  return undefined;
+}
+
+const VALIDATION_CHECK_ROW_MATCHERS: {
+  key: keyof ValidationChecks;
+  test: (checkCell: string) => boolean;
+}[] = [
+  { key: "documentMatch", test: (c) => /^document\s+match$/i.test(c) },
+  {
+    key: "quantityAndUnitMatch",
+    test: (c) => /^quantity\s*(?:&|and)\s*unit\s+match$/i.test(c),
+  },
+  { key: "valueMatch", test: (c) => /^value\s+match$/i.test(c) },
+  { key: "coaValidation", test: (c) => /^coa\s+validation$/i.test(c) },
+];
+
+function parseDollarAmount(cell: string): number | undefined {
+  const t = cell.trim();
+  const m = t.match(/^\$?\s*([\d,]+(?:\.\d{2})?)\s*$/);
+  if (!m) return undefined;
+  const num = parseFloat(m[1].replace(/,/g, ""));
+  if (Number.isNaN(num) || num < 0) return undefined;
+  return num;
+}
+
 /**
- * Parses the "Quantity and Unit Match" row in the Validation Results markdown table
- * (e.g. invoice line showing `120 PC` before PASS/FAIL).
+ * Parses the "Quantity and Unit Match" / "Quantity & Unit Match" row in Validation Results
+ * (e.g. invoice line showing `120 PC` in Expected or Actual).
  */
 function extractQuantityAndUnitTextFromMarkdown(markdown: string): string | null {
   if (!markdown?.trim()) return null;
   for (const line of markdown.split(/\r?\n/)) {
-    if (!line.includes("|") || !/\bQuantity and Unit Match\b/i.test(line)) continue;
+    if (!line.includes("|") || !/\bQuantity\s*(?:&|and)\s*Unit\s+Match\b/i.test(line))
+      continue;
     const parts = line.split("|").map((s) => s.trim());
-    const idx = parts.findIndex((c) => /quantity\s+and\s+unit\s+match/i.test(c));
+    const idx = parts.findIndex((c) =>
+      /^quantity\s*(?:&|and)\s*unit\s+match$/i.test(c),
+    );
     if (idx < 0) continue;
     const tail = parts.slice(idx + 1).filter((c) => c.length > 0);
     const candidates = tail.filter((c) => !/^(PASS|FAIL)$/i.test(c));
@@ -453,36 +499,110 @@ export function extractQuantityAndUnitTextFromRun(run: KognitosRun): string {
 
 /**
  * Parse Validation Results table for per-check PASS/FAIL.
+ * Supports legacy 3-column tables and SAP-style rows (Comparison | Expected | Actual | Status).
  */
 export function parseValidationResults(markdown: string): Partial<ValidationChecks> {
   const result: Partial<ValidationChecks> = {};
-  const docMatch = markdown.match(
-    /\|\s*Document Match\s*\|[^|]*\|[^|]*\|\s*(PASS|FAIL)\s*/i,
-  );
-  const qtyMatch = markdown.match(
-    /\|\s*Quantity and Unit Match\s*\|[^|]*\|[^|]*\|\s*(PASS|FAIL)\s*/i,
-  );
-  const valueMatch = markdown.match(
-    /\|\s*Value Match\s*\|[^|]*\|[^|]*\|\s*(PASS|FAIL)\s*/i,
-  );
-  const coaMatch = markdown.match(
-    /\|\s*COA Validation\s*\|[^|]*\|[^|]*\|\s*(PASS|FAIL)\s*/i,
-  );
-  if (docMatch) result.documentMatch = docMatch[1].toUpperCase() as "PASS" | "FAIL";
-  if (qtyMatch)
-    result.quantityAndUnitMatch = qtyMatch[1].toUpperCase() as "PASS" | "FAIL";
-  if (valueMatch) result.valueMatch = valueMatch[1].toUpperCase() as "PASS" | "FAIL";
-  if (coaMatch) result.coaValidation = coaMatch[1].toUpperCase() as "PASS" | "FAIL";
+  if (!markdown?.trim()) return result;
+
+  const sectionIdx = markdown.indexOf("## Validation Results");
+  const section =
+    sectionIdx >= 0 ? markdown.slice(sectionIdx) : markdown;
+
+  for (const line of section.split(/\r?\n/)) {
+    if (!line.includes("|")) continue;
+    const cells = splitMarkdownTableRow(line);
+    if (cells.length < 2) continue;
+    const checkCell = cells[0] ?? "";
+    if (/^check$/i.test(checkCell) || /^[-:]+$/.test(checkCell.replace(/\s/g, "")))
+      continue;
+
+    const status = validationStatusFromRowCells(cells);
+    if (!status) continue;
+
+    for (const { key, test } of VALIDATION_CHECK_ROW_MATCHERS) {
+      if (test(checkCell)) {
+        result[key] = status;
+        break;
+      }
+    }
+  }
+
   return result;
 }
 
+/** Total Value from SAP Transaction Summary (PO / GR / invoice rows). */
+function parseTotalValueFromTransactionSummary(markdown: string): number | undefined {
+  if (!markdown?.trim()) return undefined;
+  const sectionIdx = markdown.indexOf("## Transaction Summary");
+  const section = sectionIdx >= 0 ? markdown.slice(sectionIdx) : markdown;
+  const lines = section.split(/\r?\n/);
+  let totalValueCol = -1;
+
+  for (const line of lines) {
+    if (!line.includes("|")) continue;
+    const cells = splitMarkdownTableRow(line);
+    if (totalValueCol < 0) {
+      const idx = cells.findIndex((c) => /^total\s+value$/i.test(c));
+      if (idx >= 0) totalValueCol = idx;
+      continue;
+    }
+    if (cells.slice(1, -1).every((c) => /^[\s\-:]+$/.test(c) || c === "")) continue;
+
+    const docType = cells[0] ?? "";
+    if (
+      !/^(?:Purchase Order|Goods Receipt|Supplier Invoice)$/i.test(docType)
+    ) {
+      continue;
+    }
+
+    const raw = cells[totalValueCol]?.trim() ?? "";
+    const num = parseDollarAmount(raw.startsWith("$") ? raw : `$${raw}`);
+    if (num != null) {
+      if (/^supplier\s+invoice$/i.test(docType)) return num;
+    }
+  }
+
+  if (totalValueCol < 0) return undefined;
+  for (const line of lines) {
+    if (!line.includes("|")) continue;
+    const cells = splitMarkdownTableRow(line);
+    if (cells.length <= totalValueCol) continue;
+    const docType = cells[0] ?? "";
+    if (!/^purchase\s+order$/i.test(docType)) continue;
+    const raw = cells[totalValueCol]?.trim() ?? "";
+    return parseDollarAmount(raw.startsWith("$") ? raw : `$${raw}`);
+  }
+  return undefined;
+}
+
+function parseValueFromValueMatchRow(markdown: string): number | undefined {
+  const sectionIdx = markdown.indexOf("## Validation Results");
+  const section = sectionIdx >= 0 ? markdown.slice(sectionIdx) : markdown;
+  for (const line of section.split(/\r?\n/)) {
+    if (!line.includes("|") || !/\bvalue\s+match\b/i.test(line)) continue;
+    const cells = splitMarkdownTableRow(line);
+    if (!/^value\s+match$/i.test(cells[0] ?? "")) continue;
+    for (let i = cells.length - 2; i >= 1; i--) {
+      const num = parseDollarAmount(cells[i] ?? "");
+      if (num != null) return num;
+    }
+  }
+  return undefined;
+}
+
 function parsePoTotalValue(markdown: string): number | undefined {
+  const fromSummary = parseTotalValueFromTransactionSummary(markdown);
+  if (fromSummary != null) return fromSummary;
+
+  const fromValueRow = parseValueFromValueMatchRow(markdown);
+  if (fromValueRow != null) return fromValueRow;
+
   const patterns = [
     /\*\*Total[^:*]*:\*\*\s*\$?\s*([\d,]+(?:\.\d{2})?)/i,
     /\*\*Amount[^:*]*:\*\*\s*\$?\s*([\d,]+(?:\.\d{2})?)/i,
     /\*\*PO Value[^:*]*:\*\*\s*\$?\s*([\d,]+(?:\.\d{2})?)/i,
     /\*\*Invoice Total[^:*]*:\*\*\s*\$?\s*([\d,]+(?:\.\d{2})?)/i,
-    /\|\s*Value Match\s*\|[^|]*\|\s*([\d,]+(?:\.\d{2})?)/i,
     /\|\s*Total[^|]*\|\s*\$?\s*([\d,]+(?:\.\d{2})?)/i,
   ];
   for (const re of patterns) {
