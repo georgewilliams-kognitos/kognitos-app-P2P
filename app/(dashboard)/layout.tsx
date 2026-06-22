@@ -8,6 +8,12 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { ChatPanel } from "@/components/ui/chat-panel";
 import { TimePeriodProvider } from "@/contexts/time-period-context";
+import {
+  SIDEBAR_MAIN_COLLAPSED_PADDING_CLASS,
+  SidebarProvider,
+  useSidebar,
+} from "@/contexts/sidebar-context";
+import { cn } from "@/lib/utils";
 
 export default function DashboardLayout({
   children,
@@ -38,14 +44,29 @@ export default function DashboardLayout({
 
   return (
     <TimePeriodProvider>
-      <div className="min-h-svh bg-muted/30">
-        <Sidebar />
-        <div className="lg:pl-64">
-          <Topbar />
-          <main className="p-4 lg:p-6">{children}</main>
-        </div>
-        <ChatPanel />
-      </div>
+      <SidebarProvider>
+        <DashboardShell>{children}</DashboardShell>
+      </SidebarProvider>
     </TimePeriodProvider>
+  );
+}
+
+function DashboardShell({ children }: { children: React.ReactNode }) {
+  const { collapsed } = useSidebar();
+
+  return (
+    <div className="min-h-svh bg-muted/30">
+      <Sidebar />
+      <div
+        className={cn(
+          "transition-[padding-left] duration-300 ease-in-out lg:pl-64",
+          collapsed && SIDEBAR_MAIN_COLLAPSED_PADDING_CLASS,
+        )}
+      >
+        <Topbar />
+        <main className="p-4 lg:p-6">{children}</main>
+      </div>
+      <ChatPanel />
+    </div>
   );
 }

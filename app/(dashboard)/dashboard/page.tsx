@@ -477,7 +477,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
-            Validation health, payments, and triage for the selected period
+            Validation health, payments, and triage
           </p>
         </div>
         <TimePeriodSelect />
