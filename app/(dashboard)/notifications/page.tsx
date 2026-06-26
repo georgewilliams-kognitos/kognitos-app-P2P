@@ -3,16 +3,33 @@
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
-import { Bell, CheckCheck, ExternalLink } from "lucide-react";
+import { Bell, CheckCheck, ExternalLink, Info } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { DOMAIN } from "@/lib/domain.config";
 import {
+  buildHiddenVendorSummaries,
   getNotificationsForUser,
   listVendors,
   resolveVendorByDisplayName,
+  type HiddenVendorSummary,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import type { Notification } from "@/lib/types";
@@ -38,6 +55,7 @@ type UINotification = Notification & {
 export default function NotificationsPage() {
   const { user } = useAuth();
   const [items, setItems] = useState<UINotification[]>([]);
+  const [hiddenVendors, setHiddenVendors] = useState<HiddenVendorSummary[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -49,28 +67,32 @@ export default function NotificationsPage() {
         listVendors().catch(() => []),
       ])
         .then(([data, rows, vendors]) => {
-          const triage = buildP2pTriageAlerts(rows, 3);
-          const triageNotifs: UINotification[] = triage.map((t) => {
-            const hit = resolveVendorByDisplayName(vendors, t.vendorName);
-            const displayVendorName = hit?.company_name ?? t.vendorName;
-            return {
-              id: t.id,
-              user_id: user!.id,
-              request_id: null,
-              message: `[P2P Triage] ${t.message}`,
-              is_read: false,
-              created_at: t.createdAt,
-              vendor_href: hit ? `/vendors/${hit.vendor_id}` : "/vendors",
-              triage_meta: {
-                checkLabel: t.checkLabel,
-                invoiceNumber: t.invoiceNumber,
-                vendorName: displayVendorName,
-                materialName: t.materialName,
-                totalInvoiceValueText: t.totalInvoiceValueText,
-                recommendation: t.recommendation,
-              },
-            };
-          });
+          setHiddenVendors(buildHiddenVendorSummaries(vendors, rows));
+
+          const triage = buildP2pTriageAlerts(rows, { max: 3, vendors });
+          const triageNotifs: UINotification[] = triage
+            .map((t) => {
+              const hit = resolveVendorByDisplayName(vendors, t.vendorName);
+              if (!hit) return null;
+              return {
+                id: t.id,
+                user_id: user!.id,
+                request_id: null,
+                message: `[P2P Triage] ${t.message}`,
+                is_read: false,
+                created_at: t.createdAt,
+                vendor_href: `/vendors/${hit.vendor_id}`,
+                triage_meta: {
+                  checkLabel: t.checkLabel,
+                  invoiceNumber: t.invoiceNumber,
+                  vendorName: hit.company_name,
+                  materialName: t.materialName,
+                  totalInvoiceValueText: t.totalInvoiceValueText,
+                  recommendation: t.recommendation,
+                },
+              };
+            })
+            .filter((n): n is UINotification => n != null);
           const merged = applyReadOverrides([...data, ...triageNotifs]).sort(
             (a, b) =>
               new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
@@ -134,6 +156,8 @@ export default function NotificationsPage() {
         )}
       </div>
 
+      <HiddenVendorsBanner summaries={hiddenVendors} />
+
       <Tabs defaultValue="all">
         <TabsList>
           <TabsTrigger value="all">All</TabsTrigger>
@@ -154,6 +178,80 @@ export default function NotificationsPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function HiddenVendorsBanner({
+  summaries,
+}: {
+  summaries: HiddenVendorSummary[];
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  if (summaries.length === 0) return null;
+
+  const hiddenRunTotal = summaries.reduce((sum, row) => sum + row.runCount, 0);
+
+  return (
+    <>
+      <div
+        role="status"
+        className="flex flex-col gap-2 rounded-lg border border-border bg-muted/60 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div className="flex gap-3">
+          <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <p>
+            Some vendors have been hidden from display because they are not in
+            the vendor master list ({summaries.length} supplier
+            {summaries.length === 1 ? "" : "s"}, {hiddenRunTotal} run
+            {hiddenRunTotal === 1 ? "" : "s"}).
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0 bg-background"
+          onClick={() => setDialogOpen(true)}
+        >
+          View hidden vendors
+        </Button>
+      </div>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Hidden vendors</DialogTitle>
+            <DialogDescription>
+              Raw supplier names from Kognitos runs that could not be matched to
+              a record in the vendor master list.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[min(24rem,60vh)] overflow-y-auto rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Raw vendor name</TableHead>
+                  <TableHead className="w-24 text-right">Runs</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summaries.map((row) => (
+                  <TableRow key={row.rawName}>
+                    <TableCell className="font-mono text-sm">
+                      {row.rawName}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {row.runCount}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

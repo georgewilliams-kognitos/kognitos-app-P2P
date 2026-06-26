@@ -9,16 +9,19 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  filterRunRowsWithResolvableVendor,
   getKognitosInsightsCacheFromDb,
   listKognitosRunRowsFromDb,
+  listVendors,
   type KognitosRunRow,
 } from "@/lib/api";
-import type { KognitosInsights } from "@/lib/types";
+import type { KognitosInsights, Vendor } from "@/lib/types";
 import {
   aggregateResults,
   buildRunSummaryFromRun,
   extractFourWayMatchFromRun,
 } from "@/lib/p2p-insights";
+import { fourWayForRow, summaryForRow } from "@/lib/kognitos/run-row-cache";
 import {
   averageRunDurationMs,
   formatDurationMs,
@@ -31,6 +34,7 @@ export function KognitosAutomationInsightsCard() {
   const { timePeriod } = useSharedTimePeriod();
   const [insights, setInsights] = useState<KognitosInsights | null>(null);
   const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
+  const [vendors, setVendors] = useState<Vendor[]>([]);
 
   function loadData() {
     Promise.all([
@@ -39,9 +43,11 @@ export function KognitosAutomationInsightsCard() {
         console.error("listKognitosRunRowsFromDb:", err);
         return [] as KognitosRunRow[];
       }),
-    ]).then(([cache, rows]) => {
+      listVendors().catch(() => [] as Vendor[]),
+    ]).then(([cache, rows, vendorList]) => {
       setInsights(cache.insights);
       setRunRows(rows);
+      setVendors(vendorList);
     });
   }
 
@@ -63,47 +69,50 @@ export function KognitosAutomationInsightsCard() {
     [runRows, timePeriod],
   );
 
+  const vendorResolvableRunRows = useMemo(
+    () => filterRunRowsWithResolvableVendor(vendors, filteredRunRows),
+    [vendors, filteredRunRows],
+  );
+
   const p2pForWidgets = useMemo(() => {
-    const parsed = filteredRunRows
-      .map((row) => extractFourWayMatchFromRun(row.run))
+    const parsed = vendorResolvableRunRows
+      .map((row) => fourWayForRow(row))
       .filter((x): x is NonNullable<typeof x> => x != null);
-    const summaries = filteredRunRows.map((row) =>
-      buildRunSummaryFromRun(row.run),
-    );
+    const summaries = vendorResolvableRunRows.map((row) => summaryForRow(row));
     return aggregateResults(parsed, summaries);
-  }, [filteredRunRows]);
+  }, [vendorResolvableRunRows]);
 
   const { completedRunRows } = useMemo(() => {
-    const completed = filteredRunRows.filter((row) =>
+    const completed = vendorResolvableRunRows.filter((row) =>
       isCompletedRun(row.run, p2pForWidgets),
     );
     return { completedRunRows: completed };
-  }, [filteredRunRows, p2pForWidgets]);
+  }, [vendorResolvableRunRows, p2pForWidgets]);
 
   const totalRunsDisplay = useMemo(
-    () => filteredRunRows.length,
-    [filteredRunRows.length],
+    () => vendorResolvableRunRows.length,
+    [vendorResolvableRunRows.length],
   );
 
   const stpDisplay = useMemo(() => {
-    if (filteredRunRows.length === 0) return 0;
+    if (vendorResolvableRunRows.length === 0) return 0;
     return Math.round(
-      (completedRunRows.length / filteredRunRows.length) * 100,
+      (completedRunRows.length / vendorResolvableRunRows.length) * 100,
     );
-  }, [filteredRunRows.length, completedRunRows.length]);
+  }, [vendorResolvableRunRows.length, completedRunRows.length]);
 
   const awaitingGuidanceDisplay = useMemo(() => {
-    return filteredRunRows.filter(
+    return vendorResolvableRunRows.filter(
       (r) => getRunStateLabel(r.run.state) === "awaitingGuidance",
     ).length;
-  }, [filteredRunRows]);
+  }, [vendorResolvableRunRows]);
 
   const avgRunDurationMs = useMemo(
     () => averageRunDurationMs(completedRunRows.map((r) => r.run)),
     [completedRunRows],
   );
 
-  if (insights == null && filteredRunRows.length === 0) {
+  if (insights == null && vendorResolvableRunRows.length === 0) {
     return null;
   }
 
@@ -114,7 +123,7 @@ export function KognitosAutomationInsightsCard() {
           <Zap className="h-5 w-5 text-primary" />
           Kognitos Automation Insights
         </CardTitle>
-        {filteredRunRows.length > 0 && (
+        {vendorResolvableRunRows.length > 0 && (
           <p className="text-sm text-muted-foreground">
             Values in this card reflect the selected time window.
           </p>

@@ -1,12 +1,18 @@
 import type { KognitosRunRow } from "@/lib/db";
 import type { Vendor } from "@/lib/types";
 import {
-  buildRunSummaryFromRun,
   extractExtractionFieldValuesFromRun,
   extractInvoiceDateTextFromRun,
   extractQuantityAndUnitTextFromRun,
   extractVendorFromRun,
 } from "@/lib/p2p-insights";
+import { summaryForRow } from "@/lib/kognitos/run-row-cache";
+import {
+  resolveVendorForRunRow,
+  type BuildP2pTriageAlertsOptions,
+} from "@/lib/vendor-resolution";
+
+export type { BuildP2pTriageAlertsOptions };
 
 export type TriageCheckKey =
   | "documentMatch"
@@ -91,7 +97,7 @@ export function buildLatestPaymentApprovedByInvoiceForVendor(
   for (const row of rows) {
     const extracted = extractVendorFromRun(row.run);
     if (!vendorMasterMatchesExtracted(extracted, vendor)) continue;
-    const parsed = buildRunSummaryFromRun(row.run);
+    const parsed = summaryForRow(row);
     const invKey = normalizeInvoiceKey(parsed.invoiceNumber);
     if (!invKey) continue;
     const t = runTimeMs(row);
@@ -117,21 +123,25 @@ function runTimeMs(row: KognitosRunRow): number {
  * Failed payment runs for which a later run exists with the same invoice number and
  * approved payment — re-processing succeeded, so triage warnings are cleared.
  */
-function getSupersededFailedRunNames(rows: KognitosRunRow[]): Set<string> {
+export function buildSupersededFailedRunNames(
+  rows: KognitosRunRow[],
+): Set<string> {
   const superseded = new Set<string>();
-  for (const row of rows) {
-    const p = buildRunSummaryFromRun(row.run);
-    if (p.paymentApproved !== false) continue;
-    const invKey = normalizeInvoiceKey(p.invoiceNumber);
+  const summaries = rows.map((row) => ({
+    name: row.run.name,
+    summary: summaryForRow(row),
+    timeMs: runTimeMs(row),
+  }));
+  for (const row of summaries) {
+    if (row.summary.paymentApproved !== false) continue;
+    const invKey = normalizeInvoiceKey(row.summary.invoiceNumber);
     if (!invKey) continue;
-    const t0 = runTimeMs(row);
-    for (const other of rows) {
-      if (other.run.name === row.run.name) continue;
-      const po = buildRunSummaryFromRun(other.run);
-      if (normalizeInvoiceKey(po.invoiceNumber) !== invKey) continue;
-      if (runTimeMs(other) <= t0) continue;
-      if (po.paymentApproved === true) {
-        superseded.add(row.run.name);
+    for (const other of summaries) {
+      if (other.name === row.name) continue;
+      if (normalizeInvoiceKey(other.summary.invoiceNumber) !== invKey) continue;
+      if (other.timeMs <= row.timeMs) continue;
+      if (other.summary.paymentApproved === true) {
+        superseded.add(row.name);
         break;
       }
     }
@@ -168,7 +178,7 @@ function triageAlertsFromRun(
 ): TriageAlert[] {
   if (supersededFailedRunNames.has(row.run.name)) return [];
 
-  const parsed = buildRunSummaryFromRun(row.run);
+  const parsed = summaryForRow(row);
   if (parsed.paymentApproved !== false) return [];
 
   const runId = row.run.name.split("/").pop() ?? row.id;
@@ -220,9 +230,9 @@ function triageAlertsFromRun(
 
 export function buildP2pTriageAlerts(
   rows: KognitosRunRow[],
-  max?: number,
+  options?: BuildP2pTriageAlertsOptions,
 ): TriageAlert[] {
-  const superseded = getSupersededFailedRunNames(rows);
+  const superseded = buildSupersededFailedRunNames(rows);
   const sorted = [...rows].sort(
     (a, b) =>
       Date.parse(b.run.updateTime || b.run.createTime || "") -
@@ -230,9 +240,21 @@ export function buildP2pTriageAlerts(
   );
   const out: TriageAlert[] = [];
   for (const row of sorted) {
+    const vendor =
+      options?.vendors != null
+        ? resolveVendorForRunRow(
+            options.vendors,
+            row,
+            options.vendorIdByRunId,
+          )
+        : null;
+    if (options?.vendors != null && vendor == null) continue;
+
     for (const alert of triageAlertsFromRun(row, superseded)) {
-      out.push(alert);
-      if (max != null && out.length >= max) return out;
+      out.push(
+        vendor != null ? { ...alert, vendorName: vendor.company_name } : alert,
+      );
+      if (options?.max != null && out.length >= options.max) return out;
     }
   }
   return out;
@@ -243,7 +265,7 @@ export function buildP2pTriageAlertsForVendor(
   rows: KognitosRunRow[],
   vendor: Pick<Vendor, "company_name" | "vendor_id">,
 ): TriageAlert[] {
-  const superseded = getSupersededFailedRunNames(rows);
+  const superseded = buildSupersededFailedRunNames(rows);
   const sorted = [...rows].sort(
     (a, b) =>
       Date.parse(b.run.updateTime || b.run.createTime || "") -
@@ -264,9 +286,12 @@ export function buildP2pTriageAlertsForVendor(
 export function getTriageAlertsForRun(
   row: KognitosRunRow,
   allRows: KognitosRunRow[],
+  superseded?: Set<string>,
 ): TriageAlert[] {
-  const superseded = getSupersededFailedRunNames(allRows);
-  return triageAlertsFromRun(row, superseded);
+  return triageAlertsFromRun(
+    row,
+    superseded ?? buildSupersededFailedRunNames(allRows),
+  );
 }
 
 export const TRIAGE_CHECK_ORDER: TriageCheckKey[] = [...CHECK_KEYS];

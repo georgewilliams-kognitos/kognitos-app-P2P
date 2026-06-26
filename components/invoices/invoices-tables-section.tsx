@@ -65,6 +65,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
   TooltipContent,
@@ -75,7 +76,9 @@ import {
   listKognitosRunRowsFromDb,
   listVendors,
   mapVendorIdsByKognitosRunIds,
+  filterRunRowsWithResolvableVendor,
   resolveVendorByDisplayName,
+  resolveVendorForRunRow,
   type KognitosRunRow,
 } from "@/lib/api";
 import type { Vendor } from "@/lib/types";
@@ -103,7 +106,8 @@ import {
   extractFourWayMatchFromRun,
   extractVendorFromRun,
 } from "@/lib/p2p-insights";
-import { getTriageAlertsForRun } from "@/lib/p2p-triage";
+import { fourWayForRow, summaryForRow } from "@/lib/kognitos/run-row-cache";
+import { getTriageAlertsForRun, buildSupersededFailedRunNames } from "@/lib/p2p-triage";
 import { buildVendorInvoiceRowDraftEmail } from "@/lib/vendor-triage-email";
 
 const RUN_TABLE_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
@@ -148,14 +152,18 @@ function vendorFilterKeyForRow(
   vendorIdByRunId: Record<string, string>,
 ): string {
   const extracted = extractVendorFromRun(row.run);
-  const resolved = resolveVendorByDisplayName(vendorsList, extracted ?? "");
+  const hint =
+    extracted?.trim() ||
+    row.run.userInputs?.supplier_name?.trim() ||
+    row.run.userInputs?.vendor_name?.trim() ||
+    "";
+  const resolved = resolveVendorByDisplayName(vendorsList, hint);
   if (resolved) return `id:${resolved.vendor_id}`;
   const hinted = vendorsList.find(
     (v) => v.vendor_id === vendorIdByRunId[row.id],
   );
   if (hinted) return `id:${hinted.vendor_id}`;
-  const t = extracted?.trim();
-  if (t) return `name:${t.toLowerCase()}`;
+  if (hint) return `name:${hint.toLowerCase()}`;
   return "__none__";
 }
 
@@ -166,10 +174,12 @@ function rowMatchesLockedVendor(
   vendorIdByRunId: Record<string, string>,
 ): boolean {
   if (vendorIdByRunId[row.id] === lockedVendorId) return true;
-  const resolved = resolveVendorByDisplayName(
-    vendorsList,
-    extractVendorFromRun(row.run) ?? "",
-  );
+  const hint =
+    extractVendorFromRun(row.run)?.trim() ||
+    row.run.userInputs?.supplier_name?.trim() ||
+    row.run.userInputs?.vendor_name?.trim() ||
+    "";
+  const resolved = resolveVendorByDisplayName(vendorsList, hint);
   return resolved?.vendor_id === lockedVendorId;
 }
 
@@ -219,6 +229,7 @@ export function InvoicesTablesSection({
   const searchParams = useSearchParams();
   const { timePeriod } = useSharedTimePeriod();
   const [runRows, setRunRows] = useState<KognitosRunRow[]>([]);
+  const [runsLoading, setRunsLoading] = useState(true);
   const [invoicePdfVendorByRunId, setInvoicePdfVendorByRunId] = useState<
     Record<string, string>
   >({});
@@ -267,12 +278,16 @@ export function InvoicesTablesSection({
   );
 
   const loadRuns = useCallback(() => {
+    setRunsLoading(true);
     listKognitosRunRowsFromDb()
       .catch((err) => {
         console.error("listKognitosRunRowsFromDb:", err);
         return [] as KognitosRunRow[];
       })
-      .then(setRunRows);
+      .then((rows) => {
+        setRunRows(rows);
+        setRunsLoading(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -284,26 +299,6 @@ export function InvoicesTablesSection({
     window.addEventListener("chat-data-changed", handler);
     return () => window.removeEventListener("chat-data-changed", handler);
   }, [loadRuns]);
-
-  useEffect(() => {
-    const ids = runRows.map((r) => r.id);
-    if (ids.length === 0) {
-      setInvoicePdfVendorByRunId({});
-      return;
-    }
-    let cancelled = false;
-    mapVendorIdsByKognitosRunIds(ids)
-      .then((m) => {
-        if (!cancelled) setInvoicePdfVendorByRunId(m);
-      })
-      .catch((err) => {
-        console.error("mapVendorIdsByKognitosRunIds:", err);
-        if (!cancelled) setInvoicePdfVendorByRunId({});
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [runRows]);
 
   useEffect(() => {
     listVendors()
@@ -321,11 +316,9 @@ export function InvoicesTablesSection({
 
   const p2pForWidgets = useMemo(() => {
     const parsed = filteredRunRows
-      .map((row) => extractFourWayMatchFromRun(row.run))
+      .map((row) => fourWayForRow(row))
       .filter((x): x is NonNullable<typeof x> => x != null);
-    const summaries = filteredRunRows.map((row) =>
-      buildRunSummaryFromRun(row.run),
-    );
+    const summaries = filteredRunRows.map((row) => summaryForRow(row));
     return aggregateResults(parsed, summaries);
   }, [filteredRunRows]);
 
@@ -339,22 +332,79 @@ export function InvoicesTablesSection({
     return { completedRunRows: completed, incompleteRunRows: incomplete };
   }, [filteredRunRows, p2pForWidgets]);
 
+  const resolvableCompletedRunRows = useMemo(
+    () =>
+      filterRunRowsWithResolvableVendor(
+        vendors,
+        completedRunRows,
+        invoicePdfVendorByRunId,
+      ),
+    [vendors, completedRunRows, invoicePdfVendorByRunId],
+  );
+
+  const resolvableIncompleteRunRows = useMemo(
+    () =>
+      filterRunRowsWithResolvableVendor(
+        vendors,
+        incompleteRunRows,
+        invoicePdfVendorByRunId,
+      ),
+    [vendors, incompleteRunRows, invoicePdfVendorByRunId],
+  );
+
+  const supersededFailedRunNames = useMemo(
+    () => buildSupersededFailedRunNames(runRows),
+    [runRows],
+  );
+
+  const p2pRunById = useMemo(() => {
+    const map = new Map<
+      string,
+      NonNullable<(typeof p2pForWidgets)["runs"]>[number]
+    >();
+    for (const run of p2pForWidgets.runs ?? []) {
+      if (run.runId) map.set(run.runId, run);
+    }
+    return map;
+  }, [p2pForWidgets.runs]);
+
+  useEffect(() => {
+    const ids = completedRunRows.map((r) => r.id);
+    if (ids.length === 0) {
+      setInvoicePdfVendorByRunId({});
+      return;
+    }
+    let cancelled = false;
+    mapVendorIdsByKognitosRunIds(ids)
+      .then((m) => {
+        if (!cancelled) setInvoicePdfVendorByRunId(m);
+      })
+      .catch((err) => {
+        console.error("mapVendorIdsByKognitosRunIds:", err);
+        if (!cancelled) setInvoicePdfVendorByRunId({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [completedRunRows]);
+
   const analyzedVendorOptions = useMemo(() => {
     const map = new Map<string, string>();
-    for (const row of completedRunRows) {
-      const key = vendorFilterKeyForRow(row, vendors, invoicePdfVendorByRunId);
+    for (const row of resolvableCompletedRunRows) {
+      const resolved = resolveVendorForRunRow(
+        vendors,
+        row,
+        invoicePdfVendorByRunId,
+      );
+      if (!resolved) continue;
+      const key = `id:${resolved.vendor_id}`;
       if (map.has(key)) continue;
-      const extracted = extractVendorFromRun(row.run);
-      const resolved = resolveVendorByDisplayName(vendors, extracted ?? "");
-      const label =
-        resolved?.company_name ??
-        (extracted?.trim() ? extracted.trim() : "Unknown / no vendor");
-      map.set(key, label);
+      map.set(key, resolved.company_name);
     }
     return Array.from(map.entries())
       .map(([key, label]) => ({ key, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [completedRunRows, vendors, invoicePdfVendorByRunId]);
+  }, [resolvableCompletedRunRows, vendors, invoicePdfVendorByRunId]);
 
   useEffect(() => {
     if (lockedVendorId) return;
@@ -366,15 +416,15 @@ export function InvoicesTablesSection({
   }, [analyzedVendorOptions, lockedVendorId]);
 
   const completedRunRowsByPayment = useMemo(() => {
-    return completedRunRows.filter((row) => {
+    return resolvableCompletedRunRows.filter((row) => {
       const rid = runIdFromName(row.run.name);
-      const enriched = p2pForWidgets.runs?.find((r) => r.runId === rid);
+      const enriched = p2pRunById.get(rid);
       const processedForPayment = enriched?.paymentApproved === true;
       if (completedPaymentFilter === "all") return true;
       if (completedPaymentFilter === "processed") return processedForPayment;
       return !processedForPayment;
     });
-  }, [completedRunRows, p2pForWidgets, completedPaymentFilter]);
+  }, [resolvableCompletedRunRows, p2pRunById, completedPaymentFilter]);
 
   const completedRunRowsFiltered = useMemo(() => {
     let base = completedRunRowsByPayment;
@@ -426,8 +476,8 @@ export function InvoicesTablesSection({
   ]);
 
   const incompleteRunRowsForView = useMemo(() => {
-    if (!lockedVendorId) return incompleteRunRows;
-    return incompleteRunRows.filter((row) =>
+    if (!lockedVendorId) return resolvableIncompleteRunRows;
+    return resolvableIncompleteRunRows.filter((row) =>
       rowMatchesLockedVendor(
         row,
         vendors,
@@ -435,7 +485,12 @@ export function InvoicesTablesSection({
         invoicePdfVendorByRunId,
       ),
     );
-  }, [incompleteRunRows, lockedVendorId, vendors, invoicePdfVendorByRunId]);
+  }, [
+    resolvableIncompleteRunRows,
+    lockedVendorId,
+    vendors,
+    invoicePdfVendorByRunId,
+  ]);
 
   const completedLastPage = useMemo(
     () =>
@@ -536,7 +591,13 @@ export function InvoicesTablesSection({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {completedRunRows.length === 0 ? (
+          {runsLoading ? (
+            <div className="space-y-3 py-6" aria-busy="true" aria-label="Loading invoices">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : resolvableCompletedRunRows.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
               No completed runs in the database yet.
             </p>
@@ -701,14 +762,13 @@ export function InvoicesTablesSection({
                           const { run, id: kognitosRunTableId, payloadRaw } =
                             row;
                           const runId = runIdFromName(run.name);
-                          const enriched = p2pForWidgets.runs?.find(
-                            (r) => r.runId === runId,
-                          );
-                          const extractedVendor = extractVendorFromRun(run);
-                          const vendorResolved = resolveVendorByDisplayName(
+                          const enriched = p2pRunById.get(runId);
+                          const vendorResolved = resolveVendorForRunRow(
                             vendors,
-                            extractedVendor ?? "",
+                            row,
+                            invoicePdfVendorByRunId,
                           );
+                          if (!vendorResolved) return null;
                           const hintVendorId =
                             kognitosRunTableId !== ""
                               ? invoicePdfVendorByRunId[kognitosRunTableId]
@@ -739,12 +799,8 @@ export function InvoicesTablesSection({
                               vendorIdForInvoiceFileUrl ||
                                 payloadSuggestsIndexedInvoiceFile(payloadRaw),
                             );
-                          const vendorLabel =
-                            vendorResolved?.company_name ??
-                            (extractedVendor?.trim() ? extractedVendor : "—");
-                          const vendorPageHref = vendorResolved
-                            ? `/vendors/${vendorResolved.vendor_id}`
-                            : null;
+                          const vendorLabel = vendorResolved.company_name;
+                          const vendorPageHref = `/vendors/${vendorResolved.vendor_id}`;
                           const invoiceLabel = enriched?.invoiceNumber ?? "—";
                           const poNumberLabel =
                             enriched?.poNumber &&
@@ -769,6 +825,7 @@ export function InvoicesTablesSection({
                           const rowTriageAlerts = getTriageAlertsForRun(
                             row,
                             runRows,
+                            supersededFailedRunNames,
                           );
                           const canDraftEmail =
                             Boolean(vendorResolved) &&
@@ -1073,7 +1130,13 @@ export function InvoicesTablesSection({
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {incompleteRunRowsForView.length === 0 ? (
+            {runsLoading ? (
+              <div className="space-y-3 py-6" aria-busy="true" aria-label="Loading invoices on hold">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-10 w-full" />
+                ))}
+              </div>
+            ) : incompleteRunRowsForView.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
                 No incomplete runs.
               </p>

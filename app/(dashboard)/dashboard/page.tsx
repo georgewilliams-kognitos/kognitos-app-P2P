@@ -30,6 +30,7 @@ import { useAuth } from "@/lib/auth-context";
 import {
   findVendorByDisplayName,
   findVendorForMaterialName,
+  filterRunRowsWithResolvableVendor,
   getKognitosInsightsCacheFromDb,
   listKognitosRunRowsFromDb,
   listVendors,
@@ -52,6 +53,7 @@ import {
   buildRunSummaryFromRun,
   extractFourWayMatchFromRun,
 } from "@/lib/p2p-insights";
+import { fourWayForRow, summaryForRow } from "@/lib/kognitos/run-row-cache";
 import type { KognitosInsights } from "@/lib/types";
 import {
   averageRunDurationMs,
@@ -272,32 +274,35 @@ export default function DashboardPage() {
     [runRows, timePeriod],
   );
 
+  const vendorResolvableRunRows = useMemo(
+    () => filterRunRowsWithResolvableVendor(vendors, filteredRunRows),
+    [vendors, filteredRunRows],
+  );
+
   const p2pForWidgets = useMemo(() => {
-    const parsed = filteredRunRows
-      .map((row) => extractFourWayMatchFromRun(row.run))
+    const parsed = vendorResolvableRunRows
+      .map((row) => fourWayForRow(row))
       .filter((x): x is NonNullable<typeof x> => x != null);
-    const summaries = filteredRunRows.map((row) =>
-      buildRunSummaryFromRun(row.run),
-    );
+    const summaries = vendorResolvableRunRows.map((row) => summaryForRow(row));
     return aggregateResults(parsed, summaries);
-  }, [filteredRunRows]);
+  }, [vendorResolvableRunRows]);
 
   const { completedRunRows } = useMemo(() => {
-    const completed = filteredRunRows.filter((row) =>
+    const completed = vendorResolvableRunRows.filter((row) =>
       isCompletedRun(row.run, p2pForWidgets),
     );
     return { completedRunRows: completed };
-  }, [filteredRunRows, p2pForWidgets]);
+  }, [vendorResolvableRunRows, p2pForWidgets]);
 
   /** Only runs with a completed 4-way check (extractable match); processed % is payment-approved within this set. */
   const completedChecksInvoiceStats = useMemo(() => {
     let withCompletedChecks = 0;
     let processedCount = 0;
     let pendingPaymentsTotalUsd = 0;
-    for (const row of filteredRunRows) {
-      if (extractFourWayMatchFromRun(row.run) == null) continue;
+    for (const row of vendorResolvableRunRows) {
+      if (fourWayForRow(row) == null) continue;
       withCompletedChecks += 1;
-      const summary = buildRunSummaryFromRun(row.run);
+      const summary = summaryForRow(row);
       if (summary.paymentApproved === true) {
         processedCount += 1;
       } else {
@@ -316,16 +321,16 @@ export default function DashboardPage() {
           ? Math.round((100 * processedCount) / withCompletedChecks)
           : 0,
     };
-  }, [filteredRunRows]);
+  }, [vendorResolvableRunRows]);
 
   const topVendor = useMemo(
-    () => topVendorStatsFromRuns(filteredRunRows.map((r) => r.run)),
-    [filteredRunRows],
+    () => topVendorStatsFromRuns(vendorResolvableRunRows.map((r) => r.run)),
+    [vendorResolvableRunRows],
   );
 
   const topMaterial = useMemo(
-    () => topMaterialFromRuns(filteredRunRows.map((r) => r.run)),
-    [filteredRunRows],
+    () => topMaterialFromRuns(vendorResolvableRunRows.map((r) => r.run)),
+    [vendorResolvableRunRows],
   );
   const [topVendorHref, setTopVendorHref] = useState<string | undefined>(
     undefined,
@@ -350,13 +355,18 @@ export default function DashboardPage() {
       try {
         const hit = await findVendorByDisplayName(topVendor.vendor);
         if (!cancelled) {
-          setTopVendorHref(hit ? `/vendors/${hit.vendor_id}` : "/vendors");
-          setTopVendorDisplayName(hit?.company_name ?? topVendor.vendor);
+          if (!hit) {
+            setTopVendorHref(undefined);
+            setTopVendorDisplayName(undefined);
+            return;
+          }
+          setTopVendorHref(`/vendors/${hit.vendor_id}`);
+          setTopVendorDisplayName(hit.company_name);
         }
       } catch {
         if (!cancelled) {
-          setTopVendorHref("/vendors");
-          setTopVendorDisplayName(topVendor.vendor);
+          setTopVendorHref(undefined);
+          setTopVendorDisplayName(undefined);
         }
       }
     };
@@ -404,9 +414,9 @@ export default function DashboardPage() {
       valueMatch: 0,
       coaValidation: 0,
     };
-    for (const row of filteredRunRows) {
-      if (extractFourWayMatchFromRun(row.run) == null) continue;
-      const s = buildRunSummaryFromRun(row.run);
+    for (const row of vendorResolvableRunRows) {
+      if (fourWayForRow(row) == null) continue;
+      const s = summaryForRow(row);
       if (s.paymentApproved === true) continue;
       for (const def of PENDING_FAIL_SEGMENTS) {
         if (s[def.key] === "FAIL") fails[def.key] += 1;
@@ -420,7 +430,7 @@ export default function DashboardPage() {
     }));
     const totalFailMarks = items.reduce((sum, x) => sum + x.count, 0);
     return { items, totalFailMarks };
-  }, [filteredRunRows]);
+  }, [vendorResolvableRunRows]);
 
   const unreadTriageByVendor = useMemo(() => {
     const groups = new Map<
@@ -452,7 +462,7 @@ export default function DashboardPage() {
     let cancelled = false;
     const loadTriage = async () => {
       if (!user) return;
-      const alerts = buildP2pTriageAlerts(filteredRunRows);
+      const alerts = buildP2pTriageAlerts(vendorResolvableRunRows, { vendors });
       const overrides = getReadOverrides();
       const withLinks = alerts.map((a) => {
         const hit = resolveVendorByDisplayName(vendors, a.vendorName);
@@ -469,7 +479,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [filteredRunRows, user, vendors]);
+  }, [vendorResolvableRunRows, user, vendors]);
 
   return (
     <div className="space-y-6">
@@ -477,7 +487,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
-            Validation health, payments, and triage for the selected period
+            Validation health, payments, and triage
           </p>
         </div>
         <TimePeriodSelect />

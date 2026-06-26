@@ -11,12 +11,18 @@ import {
   Layers,
   Menu,
   FileText,
+  ChevronLeft,
+  ChevronRight,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { DOMAIN, getRoleConfig } from "@/lib/domain.config";
 import { canAccessPath } from "@/lib/role-permissions";
+import {
+  SIDEBAR_COLLAPSED_WIDTH_CLASS,
+  useSidebar,
+} from "@/contexts/sidebar-context";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +32,12 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const ICON_MAP: Record<string, LucideIcon> = {
   ClipboardList,
@@ -52,7 +64,51 @@ function getInitials(name: string) {
     .slice(0, 2);
 }
 
-function SidebarNav() {
+function SidebarNavItem({
+  href,
+  label,
+  icon: Icon,
+  active,
+  collapsed,
+}: {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  active: boolean;
+  collapsed: boolean;
+}) {
+  const link = (
+    <Link
+      href={href}
+      aria-label={collapsed ? label : undefined}
+      className={cn(
+        "flex w-full items-center rounded-md text-sm font-medium transition-colors",
+        collapsed ? "justify-center px-0 py-2" : "gap-3 px-3 py-2",
+        active
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-sidebar-muted hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+      )}
+    >
+      <Icon className="size-[18px] shrink-0" aria-hidden />
+      {!collapsed && <span className="truncate">{label}</span>}
+    </Link>
+  );
+
+  if (!collapsed) {
+    return link;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{link}</TooltipTrigger>
+      <TooltipContent side="right" sideOffset={10}>
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function SidebarNav({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname();
   const { user } = useAuth();
 
@@ -64,69 +120,136 @@ function SidebarNav() {
 
   const roleConfig = user ? getRoleConfig(user.role) : undefined;
 
-  return (
-    <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
-      <div className="flex h-16 items-center gap-2.5 px-5 border-b border-sidebar-border">
-        <div className="flex size-8 items-center justify-center rounded-lg bg-brand text-primary-foreground">
-          <LogoIcon className="size-4" />
-        </div>
-        <span className="text-base font-semibold tracking-normal">
-          {DOMAIN.appName}
-        </span>
+  const nav = (
+    <div className="flex h-full flex-col overflow-visible bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
+      <div
+        className={cn(
+          "flex h-16 shrink-0 items-center border-b border-sidebar-border",
+          collapsed ? "justify-center px-0" : "gap-2.5 px-5",
+        )}
+      >
+        {collapsed ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand text-primary-foreground">
+                <LogoIcon className="size-4" aria-hidden />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={10}>
+              {DOMAIN.appName}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <>
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand text-primary-foreground">
+              <LogoIcon className="size-4" />
+            </div>
+            <span className="min-w-0 flex-1 truncate text-base font-semibold tracking-normal">
+              {DOMAIN.appName}
+            </span>
+          </>
+        )}
       </div>
 
-      <nav className="flex-1 space-y-0.5 px-3 py-4">
+      <nav
+        className={cn(
+          "flex-1 space-y-0.5 overflow-visible py-4",
+          collapsed ? "px-0" : "px-3",
+        )}
+      >
         {visibleItems.map((item) => {
           const Icon = ICON_MAP[item.icon] ?? Layers;
-          const active = isActive(pathname, item.href);
           return (
-            <Link
+            <SidebarNavItem
               key={item.href}
               href={item.href}
-              className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                active
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-muted hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
-              )}
-            >
-              <Icon className="size-[18px] shrink-0" />
-              {item.label}
-            </Link>
+              label={item.label}
+              icon={Icon}
+              active={isActive(pathname, item.href)}
+              collapsed={collapsed}
+            />
           );
         })}
       </nav>
 
       {user && (
-        <div className="border-t border-sidebar-border p-4">
-          <div className="flex items-center gap-3">
-            <Avatar className="size-9 shrink-0">
-              <AvatarFallback className="bg-brand/20 text-xs font-medium">
-                {getInitials(user.full_name)}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">
-                {user.full_name}
-              </p>
-              <Badge
-                variant="secondary"
-                className="mt-0.5 text-[10px]"
-              >
-                {roleConfig?.label ?? user.role}
-              </Badge>
+        <div
+          className={cn(
+            "border-t border-sidebar-border",
+            collapsed ? "flex justify-center px-0 py-3" : "p-4",
+          )}
+        >
+          {collapsed ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Avatar className="size-8 shrink-0">
+                  <AvatarFallback className="bg-brand/20 text-xs font-medium">
+                    {getInitials(user.full_name)}
+                  </AvatarFallback>
+                </Avatar>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={10} className="max-w-[200px]">
+                <p className="font-medium">{user.full_name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {roleConfig?.label ?? user.role}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <div className="flex items-center gap-3">
+              <Avatar className="size-9 shrink-0">
+                <AvatarFallback className="bg-brand/20 text-xs font-medium">
+                  {getInitials(user.full_name)}
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{user.full_name}</p>
+                <Badge variant="secondary" className="mt-0.5 text-[10px]">
+                  {roleConfig?.label ?? user.role}
+                </Badge>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>
   );
+
+  if (collapsed) {
+    return <TooltipProvider delayDuration={200}>{nav}</TooltipProvider>;
+  }
+
+  return nav;
 }
 
 export function Sidebar() {
+  const { collapsed, toggleCollapsed } = useSidebar();
+
   return (
-    <aside className="fixed left-0 top-0 z-30 hidden h-full w-64 lg:block">
-      <SidebarNav />
+    <aside
+      className={cn(
+        "fixed left-0 top-0 z-30 hidden h-full overflow-visible transition-[width] duration-300 ease-in-out lg:block",
+        collapsed ? SIDEBAR_COLLAPSED_WIDTH_CLASS : "w-64",
+      )}
+    >
+      <SidebarNav collapsed={collapsed} />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className={cn(
+            "absolute top-[3.25rem] z-40 size-7 rounded-full border-sidebar-border bg-background shadow-sm",
+            collapsed ? "-right-3.5" : "-right-3.5",
+          )}
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {collapsed ? (
+            <ChevronRight className="size-4" />
+          ) : (
+            <ChevronLeft className="size-4" />
+          )}
+        </Button>
     </aside>
   );
 }
