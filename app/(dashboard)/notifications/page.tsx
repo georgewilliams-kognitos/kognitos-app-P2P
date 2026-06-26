@@ -70,11 +70,11 @@ export default function NotificationsPage() {
           setHiddenVendors(buildHiddenVendorSummaries(vendors, rows));
 
           const triage = buildP2pTriageAlerts(rows, { max: 3, vendors });
-          const triageNotifs: UINotification[] = triage
-            .map((t) => {
-              const hit = resolveVendorByDisplayName(vendors, t.vendorName);
-              if (!hit) return null;
-              return {
+          const triageNotifs: UINotification[] = triage.flatMap((t) => {
+            const hit = resolveVendorByDisplayName(vendors, t.vendorName);
+            if (!hit) return [];
+            return [
+              {
                 id: t.id,
                 user_id: user!.id,
                 request_id: null,
@@ -90,9 +90,9 @@ export default function NotificationsPage() {
                   totalInvoiceValueText: t.totalInvoiceValueText,
                   recommendation: t.recommendation,
                 },
-              };
-            })
-            .filter((n): n is UINotification => n != null);
+              },
+            ];
+          });
           const merged = applyReadOverrides([...data, ...triageNotifs]).sort(
             (a, b) =>
               new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),

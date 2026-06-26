@@ -31,7 +31,7 @@ export function slimRunForClientTransport(run: KognitosRun): KognitosRun {
       ...run.state,
       completed: {
         ...completed,
-        outputs,
+        outputs: outputs as Record<string, string>,
       },
     },
   };
