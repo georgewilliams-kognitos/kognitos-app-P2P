@@ -58,7 +58,7 @@ import type { KognitosInsights } from "@/lib/types";
 import {
   averageRunDurationMs,
   formatDurationMs,
-  topMaterialFromRuns,
+  topMaterialFromRunRows,
   topVendorStatsFromRuns,
 } from "@/lib/kognitos/dashboard-metrics";
 import { isCompletedRun } from "@/lib/kognitos/run-dashboard";
@@ -329,7 +329,7 @@ export default function DashboardPage() {
   );
 
   const topMaterial = useMemo(
-    () => topMaterialFromRuns(vendorResolvableRunRows.map((r) => r.run)),
+    () => topMaterialFromRunRows(vendorResolvableRunRows),
     [vendorResolvableRunRows],
   );
   const [topVendorHref, setTopVendorHref] = useState<string | undefined>(
