@@ -486,38 +486,25 @@ export async function getKognitosInsightsCacheFromDb(): Promise<{
   };
 }
 
+import type { RunSummary, FourWayMatchResult } from "./p2p-insights";
+
 export interface KognitosRunRow {
   id: string;
   name: string;
   run: KognitosRun;
   /** Raw `kognitos_runs.payload` for client-side invoice file ref extraction. */
   payloadRaw: Record<string, unknown>;
+  /** Pre-parsed on server (slim API) to avoid shipping markdown blobs to the client. */
+  cachedSummary?: RunSummary;
+  cachedFourWay?: FourWayMatchResult | null;
 }
 
-/** All synced runs for dashboard tables (newest first). */
+/** All synced runs for list views (newest first). Fetches slim rows via server API. */
 export async function listKognitosRunRowsFromDb(): Promise<KognitosRunRow[]> {
-  const { data, error } = await sb()
-    .from("kognitos_runs")
-    .select("id, name, payload")
-    .order("create_time", { ascending: false });
-  if (error) throw error;
-  const out: KognitosRunRow[] = [];
-  for (const row of data ?? []) {
-    const run = parseKognitosRunPayload(row.payload);
-    if (run) {
-      const payloadRaw =
-        row.payload != null &&
-        typeof row.payload === "object" &&
-        !Array.isArray(row.payload)
-          ? (row.payload as Record<string, unknown>)
-          : {};
-      out.push({
-        id: String(row.id),
-        name: String(row.name),
-        run,
-        payloadRaw,
-      });
-    }
+  const res = await fetch("/api/kognitos/run-rows", { cache: "no-store" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `run-rows HTTP ${res.status}`);
   }
-  return out;
+  return res.json() as Promise<KognitosRunRow[]>;
 }

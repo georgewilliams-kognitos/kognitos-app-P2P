@@ -35,6 +35,12 @@ export {
   resolveVendorByDisplayName,
   findVendorForMaterialName,
   listVendorInvoicesForVendor,
+  vendorHintFromRun,
+  resolveVendorForRunRow,
+  isVendorResolvableRunRow,
+  filterRunRowsWithResolvableVendor,
+  buildHiddenVendorSummaries,
+  type HiddenVendorSummary,
 } from "./vendors";
 
 export {

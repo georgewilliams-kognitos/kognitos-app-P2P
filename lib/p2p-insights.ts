@@ -729,7 +729,10 @@ export function extractVendorFromRun(run: KognitosRun): string | null {
       "supplier_name",
     ]) {
       const v = ui[key]?.trim();
-      if (v && isLikelyVendorName(v)) return v;
+      if (!v || v.length > 256) continue;
+      // Explicit ERP fields (injected server-side after slimming) may be numeric vendor_id.
+      if (key === "vendor_name" || key === "supplier_name") return v;
+      if (isLikelyVendorName(v)) return v;
     }
   }
   return null;

@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessPath, getDefaultPath } from "@/lib/role-permissions";
+import { DataConnectionAlert } from "@/components/layout/data-connection-alert";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { ChatPanel } from "@/components/ui/chat-panel";
@@ -64,7 +65,12 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         )}
       >
         <Topbar />
-        <main className="p-4 lg:p-6">{children}</main>
+        <main className="p-4 lg:p-6">
+          <div className="mb-4">
+            <DataConnectionAlert />
+          </div>
+          {children}
+        </main>
       </div>
       <ChatPanel />
     </div>

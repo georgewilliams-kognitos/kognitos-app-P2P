@@ -43,6 +43,15 @@ export async function findVendorForMaterialName(
 }
 
 
+export {
+  vendorHintFromRun,
+  resolveVendorForRunRow,
+  isVendorResolvableRunRow,
+  filterRunRowsWithResolvableVendor,
+  buildHiddenVendorSummaries,
+  type HiddenVendorSummary,
+} from "@/lib/vendor-resolution";
+
 export async function listVendorInvoicesForVendor(
   vendorId: string,
 ): Promise<VendorInvoice[]> {
