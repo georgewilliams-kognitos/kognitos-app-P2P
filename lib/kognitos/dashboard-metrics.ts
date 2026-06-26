@@ -1,9 +1,11 @@
-import type { KognitosRun } from "@/lib/types";
+import type { KognitosRunRow } from "@/lib/db";
 import {
   buildRunSummaryFromRun,
   extractExtractionFieldValuesFromRun,
   extractVendorFromRun,
 } from "@/lib/p2p-insights";
+import { summaryForRow } from "@/lib/kognitos/run-row-cache";
+import type { KognitosRun } from "@/lib/types";
 
 /** Mean wall-clock duration (create → last update) for the given runs (e.g. completed-only). */
 export function averageRunDurationMs(runs: KognitosRun[]): number | null {
@@ -107,6 +109,61 @@ export function topMaterialFromRuns(runs: KognitosRun[]): {
       extractExtractionFieldValuesFromRun(run, ["quantity"])[0] ??
       "1";
     const qty = Math.max(1, parseCountValue(countRaw));
+    const key = norm(material);
+    const prev = materialCounts.get(key);
+    if (!prev) {
+      materialCounts.set(key, {
+        material: material.trim().replace(/\s+/g, " "),
+        totalCount: qty,
+      });
+    } else {
+      materialCounts.set(key, {
+        material: prev.material,
+        totalCount: prev.totalCount + qty,
+      });
+    }
+  }
+
+  let best: { material: string; totalCount: number } | null = null;
+  for (const row of materialCounts.values()) {
+    if (!best || row.totalCount > best.totalCount) best = row;
+  }
+  return best;
+}
+
+/** Top material across run rows (uses server-cached material when outputs are slimmed). */
+export function topMaterialFromRunRows(rows: KognitosRunRow[]): {
+  material: string;
+  totalCount: number;
+} | null {
+  const materialCounts = new Map<string, { material: string; totalCount: number }>();
+  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+
+  for (const row of rows) {
+    const summary = summaryForRow(row);
+    if (summary.paymentApproved !== true) continue;
+
+    const material =
+      row.cachedMaterialName?.trim() ||
+      extractExtractionFieldValuesFromRun(row.run, [
+        "material",
+        "material_name",
+        "material_number",
+      ])[0]?.trim() ||
+      "";
+    if (!material) continue;
+
+    const qty =
+      row.cachedMaterialQuantity != null && row.cachedMaterialQuantity > 0
+        ? row.cachedMaterialQuantity
+        : Math.max(
+            1,
+            parseCountValue(
+              extractExtractionFieldValuesFromRun(row.run, ["count"])[0] ??
+                extractExtractionFieldValuesFromRun(row.run, ["quantity"])[0] ??
+                "1",
+            ),
+          );
     const key = norm(material);
     const prev = materialCounts.get(key);
     if (!prev) {

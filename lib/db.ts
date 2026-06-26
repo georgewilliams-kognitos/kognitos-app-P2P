@@ -497,6 +497,9 @@ export interface KognitosRunRow {
   /** Pre-parsed on server (slim API) to avoid shipping markdown blobs to the client. */
   cachedSummary?: RunSummary;
   cachedFourWay?: FourWayMatchResult | null;
+  /** Material line from IDP extraction (server-only; stripped from client run outputs). */
+  cachedMaterialName?: string;
+  cachedMaterialQuantity?: number;
 }
 
 /** All synced runs for list views (newest first). Fetches slim rows via server API. */

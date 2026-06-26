@@ -6,6 +6,7 @@ import {
 } from "@/lib/kognitos/slim-run-payload";
 import {
   buildRunSummaryFromRun,
+  extractExtractionFieldValuesFromRun,
   extractFourWayMatchFromRun,
   extractVendorFromRun,
 } from "@/lib/p2p-insights";
@@ -42,6 +43,21 @@ export async function fetchKognitosRunRowsFromSupabase(): Promise<
     const run = parseKognitosRunPayload(row.payload);
     if (!run) continue;
     const vendorName = extractVendorFromRun(run);
+    const materialName =
+      extractExtractionFieldValuesFromRun(run, [
+        "material",
+        "material_name",
+        "material_number",
+      ])[0]?.trim() || undefined;
+    const qtyRaw = extractExtractionFieldValuesFromRun(run, [
+      "count",
+      "quantity",
+    ])[0];
+    let cachedMaterialQuantity: number | undefined;
+    if (qtyRaw) {
+      const n = Number(String(qtyRaw).replace(/,/g, "").trim());
+      if (Number.isFinite(n) && n > 0) cachedMaterialQuantity = n;
+    }
     let slimRun = slimRunForClientTransport(run);
     if (vendorName?.trim()) {
       slimRun = {
@@ -59,6 +75,8 @@ export async function fetchKognitosRunRowsFromSupabase(): Promise<
       payloadRaw: slimKognitosPayloadForClient(fullPayload),
       cachedSummary: buildRunSummaryFromRun(run),
       cachedFourWay: extractFourWayMatchFromRun(run),
+      cachedMaterialName: materialName,
+      cachedMaterialQuantity,
     });
   }
   return out;
