@@ -464,15 +464,25 @@ export default function DashboardPage() {
       if (!user) return;
       const alerts = buildP2pTriageAlerts(vendorResolvableRunRows, { vendors });
       const overrides = getReadOverrides();
-      const withLinks = alerts.map((a) => {
-        const hit = resolveVendorByDisplayName(vendors, a.vendorName);
-        return {
-          ...a,
-          vendorName: hit?.company_name ?? a.vendorName,
-          vendorHref: hit ? `/vendors/${hit.vendor_id}` : "/vendors",
-          is_read: overrides[a.id] ?? false,
-        };
-      });
+      const withLinks = alerts
+        .map((a) => {
+          const hit = resolveVendorByDisplayName(vendors, a.vendorName);
+          if (!hit) return null;
+          return {
+            ...a,
+            vendorName: hit.company_name,
+            vendorHref: `/vendors/${hit.vendor_id}`,
+            is_read: overrides[a.id] ?? false,
+          };
+        })
+        .filter(
+          (
+            a,
+          ): a is TriageAlert & {
+            vendorHref: string;
+            is_read: boolean;
+          } => a != null,
+        );
       if (!cancelled) setTriageAlerts(withLinks);
     };
     loadTriage();
